@@ -3,7 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const { randomUUID: uuidv4 } = require('crypto');
 const jwt = require('jsonwebtoken');
 const fetch = require('node-fetch');
 
@@ -12,6 +11,8 @@ const User = require('./models/User');
 const Ticket = require('./models/Ticket');
 const Alert = require('./models/Alert');
 const Report = require('./models/Report');
+const { GTFSData } = require('./gtfs_transit');
+const { updateGTFS } = require('./gtfs_updater');
 
 const app = express();
 app.use(cors());
@@ -19,85 +20,107 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tirana-transit-secret-2024';
 const ORS_API_KEY = process.env.ORS_API_KEY || '';
+const GTFS_CACHE = path.join(__dirname, 'gtfs_cache.json');
 
 // ─── LOAD INSTITUTIONS DATA ──────────────────────────────────────────────────
 const institutionsPath = path.join(__dirname, 'institutions.json');
 const institutions = JSON.parse(fs.readFileSync(institutionsPath, 'utf-8'));
-console.log(`Loaded ${institutions.length} institutions`);
+console.log(`[Server] Loaded ${institutions.length} institutions`);
 
-// ─── LOAD AND PARSE THE GEOJSON FILE ─────────────────────────────────────────
-const geojsonPath = path.join(__dirname, 'export.geojson');
-const geojson = JSON.parse(fs.readFileSync(geojsonPath, 'utf-8'));
-const allFeatures = geojson.features;
+// ─── GTFS STARTUP ───────────────────────────────────────────────────────────
+let gtfs = null;
+let simplifiedRoutes = [];
+let simplifiedStops = [];
 
-console.log(`Loaded GeoJSON: ${allFeatures.length} features`);
+async function initGTFS() {
+  try {
+    await updateGTFS();
 
-// ─── PARSE ROUTES ────────────────────────────────────────────────────────────
-const realRoutes = allFeatures
-  .filter(f => f.properties.type === 'route')
-  .map(f => {
-    const p = f.properties;
-    const ref = p.ref || p.name?.match(/Bus ([^:]+):/)?.[1] || 'UNK';
-    return {
-      id: p['@id'],
-      ref,
-      name: p.name || '',
-      from: p.from || '',
-      to: p.to || '',
-      via: p.via || '',
-      colour: p.colour || '#888888',
-      interval: p.interval || '',
-      active: true,
-      geometry: f.geometry,
-    };
-  });
+    gtfs = new GTFSData();
+    gtfs.loadFromCache();
 
-console.log(`Parsed ${realRoutes.length} routes`);
+    const gtfsData = JSON.parse(fs.readFileSync(GTFS_CACHE, 'utf-8'));
 
-// ─── PARSE STOPS ─────────────────────────────────────────────────────────────
-const realStops = allFeatures
-  .filter(f => f.geometry?.type === 'Point' && f.properties.name)
-  .map(f => {
-    const p = f.properties;
-    const [lng, lat] = f.geometry.coordinates;
+    simplifiedRoutes = (gtfsData.routes || [])
+      .filter(r => r.geometry)
+      .map((r, i) => ({
+        id: `route_${r.route_id}`,
+        route_id: r.route_id,
+        ref: r.route_short_name || `R${i}`,
+        name: r.route_long_name || '',
+        colour: r.route_color || '#4e9eff',
+        active: true,
+        geometry: r.geometry,
+        stops: r.stops || [],
+      }));
 
-    const routesAtStop = (p['@relations'] || [])
-      .map(rel => ({
-        ref: rel.reltags?.ref || null,
-        colour: rel.reltags?.colour || '#888888',
-        name: rel.reltags?.name || '',
-      }))
-      .filter(r => r.ref);
+    simplifiedStops = (gtfsData.stops || []).map(s => ({
+      id: `stop_${s.stop_id}`,
+      stop_id: String(s.stop_id),
+      name: s.stop_name || s.name || '',
+      lat: parseFloat(s.stop_lat || s.lat || 0),
+      lng: parseFloat(s.stop_lon || s.lng || 0),
+      routes: s.routes || [],
+    }));
+    console.log(`[Server] simplifiedStops: ${simplifiedStops.length} stops for REST API`);
+    console.log(`[Server] gtfs.stopsMap: ${gtfs.stopsMap.size} entries`);
+    console.log(`[Server] gtfs.stopTimesByStop: ${gtfs.stopTimesByStop.size} entries`);
+    console.log(`[Server] gtfs.activeServices: ${gtfs.activeServices.size}`);
 
-    return {
-      id: p['@id'],
-      name: p.name,
-      lat,
-      lng,
-      shelter: p.shelter === 'yes',
-      wheelchair: p.wheelchair === 'yes',
-      bench: p.bench === 'yes',
-      lit: p.lit === 'yes',
-      routes: routesAtStop,
-    };
-  });
+  } catch (err) {
+    console.error(`[Server] GTFS init failed: ${err.message}`);
+  }
+}
 
-console.log(`Parsed ${realStops.length} stops`);
+// ─── SCHEDULED WEEKLY REFRESH ───────────────────────────────────────────────
+let weeklyTimer = null;
+async function scheduleWeeklyRefresh() {
+  const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  weeklyTimer = setInterval(async () => {
+    console.log('[Server] Weekly GTFS refresh triggered...');
+    try {
+      await updateGTFS(true);
+      if (gtfs) {
+        gtfs.loadFromCache();
+        const gtfsData = JSON.parse(fs.readFileSync(GTFS_CACHE, 'utf-8'));
+        simplifiedRoutes = (gtfsData.routes || []).filter(r => r.geometry).map((r, i) => ({
+          id: `route_${r.route_id}`, route_id: r.route_id,
+          ref: r.route_short_name || `R${i}`, name: r.route_long_name || '',
+          colour: r.route_color || '#4e9eff', active: true,
+          geometry: r.geometry, stops: r.stops || [],
+        }));
+        simplifiedStops = (gtfsData.stops || []).map(s => ({
+          id: `stop_${s.stop_id}`, stop_id: String(s.stop_id),
+          name: s.stop_name || s.name || '',
+          lat: parseFloat(s.stop_lat || s.lat || 0),
+          lng: parseFloat(s.stop_lon || s.lng || 0),
+          routes: s.routes || [],
+        }));
+        console.log('[Server] Weekly refresh complete.');
+      }
+    } catch (err) {
+      console.error(`[Server] Weekly refresh failed: ${err.message}`);
+    }
+  }, ONE_WEEK_MS);
+  console.log(`[Server] Weekly GTFS refresh scheduled (~7 days)`);
+}
 
 function stopRouteRefs(stop) {
   return new Set((stop.routes || []).map((r) => r.ref).filter(Boolean));
 }
 
 function routeByRef(ref) {
-  return realRoutes.find((r) => r.ref === ref);
+  return simplifiedRoutes.find((r) => r.ref === ref);
 }
 
 // ─── VEHICLES IN MEMORY ──────────────────────────────────────────────────────
-const vehicles = (() => {
-  const activeRoutes = realRoutes.filter(r => r.active).slice(0, 6);
+let vehicles = [];
+
+function initializeVehicles() {
+  const activeRoutes = simplifiedRoutes.filter(r => r.active).slice(0, 6);
   const statuses = ['moving', 'moving', 'stopped', 'moving', 'maintenance', 'moving'];
   const crowds = ['medium', 'high', 'low', 'medium', 'empty', 'low'];
-  return activeRoutes.map((route, i) => ({
+  vehicles = activeRoutes.map((route, i) => ({
     id: `v${i + 1}`,
     plate: `TR-00${i + 1}-${String.fromCharCode(65 + i * 2)}${String.fromCharCode(66 + i * 2)}`,
     routeId: route.id,
@@ -109,9 +132,8 @@ const vehicles = (() => {
     nextStop: null,
     eta: statuses[i] === 'moving' ? Math.floor(2 + Math.random() * 8) : null,
   }));
-})();
+}
 
-// Simulate vehicle movement
 setInterval(() => {
   vehicles.forEach(v => {
     if (v.status === 'moving') {
@@ -183,7 +205,7 @@ app.get('/api/auth/me', auth, async (req, res) => {
 
 // ─── ROUTES API ──────────────────────────────────────────────────────────────
 app.get('/api/routes', (req, res) => {
-  const lightweight = realRoutes.map(r => ({
+  const lightweight = simplifiedRoutes.map(r => ({
     id: r.id,
     ref: r.ref,
     name: r.name,
@@ -198,7 +220,7 @@ app.get('/api/routes', (req, res) => {
 });
 
 app.get('/api/routes/:id', (req, res) => {
-  const route = realRoutes.find(r => r.id === req.params.id);
+  const route = simplifiedRoutes.find(r => r.id === req.params.id);
   if (!route) return res.status(404).json({ error: 'Route not found' });
   res.json(route);
 });
@@ -206,7 +228,7 @@ app.get('/api/routes/:id', (req, res) => {
 // ─── STOPS API ───────────────────────────────────────────────────────────────
 app.get('/api/stops', (req, res) => {
   const { q, route } = req.query;
-  let results = realStops;
+  let results = simplifiedStops;
 
   if (q) {
     const query = q.toLowerCase();
@@ -218,11 +240,16 @@ app.get('/api/stops', (req, res) => {
   res.json(results);
 });
 
-// ─── JOURNEY PLANNER ─────────────────────────────────────────────────────────
+// ─── JOURNEY PLANNER (legacy) ─────────────────────────────────────────────────
 app.post('/api/journey/plan', (req, res) => {
   const { fromStopId, toStopId } = req.body || {};
-  const fromStop = realStops.find((s) => s.id === fromStopId);
-  const toStop = realStops.find((s) => s.id === toStopId);
+
+  if (!gtfs) {
+    return res.status(503).json({ error: 'GTFS data not loaded' });
+  }
+
+  const fromStop = simplifiedStops.find((s) => s.id === fromStopId);
+  const toStop = simplifiedStops.find((s) => s.id === toStopId);
 
   if (!fromStop || !toStop) return res.status(400).json({ error: 'Invalid fromStopId or toStopId' });
 
@@ -234,63 +261,203 @@ app.post('/api/journey/plan', (req, res) => {
     });
   }
 
-  const fromRefs = stopRouteRefs(fromStop);
-  const toRefs = stopRouteRefs(toStop);
-  const directRefs = [...fromRefs].filter((ref) => toRefs.has(ref));
+  const result = gtfs.planJourney(fromStop.stop_id, toStop.stop_id);
 
-  const direct = directRefs.map((ref) => {
-    const route = routeByRef(ref);
-    return { routeId: route?.id, ref, name: route?.name || ref, colour: route?.colour || '#888888' };
-  });
-
-  const transfers = [];
-  const seen = new Set();
-
-  for (const mid of realStops) {
-    if (mid.id === fromStop.id || mid.id === toStop.id) continue;
-    const midRefs = stopRouteRefs(mid);
-    if (midRefs.size === 0) continue;
-
-    for (const r1 of fromStop.routes || []) {
-      if (!r1.ref || !midRefs.has(r1.ref)) continue;
-      for (const r2 of toStop.routes || []) {
-        if (!r2.ref || !midRefs.has(r2.ref)) continue;
-        if (r1.ref === r2.ref) continue;
-
-        const key = `${mid.id}|${r1.ref}|${r2.ref}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-
-        const routeA = routeByRef(r1.ref);
-        const routeB = routeByRef(r2.ref);
-        transfers.push({
-          viaStopId: mid.id,
-          viaStopName: mid.name,
-          viaLat: mid.lat,
-          viaLng: mid.lng,
-          leg1: { routeId: routeA?.id, ref: r1.ref, name: routeA?.name || r1.ref, colour: routeA?.colour || r1.colour || '#888888' },
-          leg2: { routeId: routeB?.id, ref: r2.ref, name: routeB?.name || r2.ref, colour: routeB?.colour || r2.colour || '#888888' },
-        });
-      }
-    }
-  }
-
-  const transfersLimited = transfers.slice(0, 60);
   res.json({
-    fromStop: { id: fromStop.id, name: fromStop.name, lat: fromStop.lat, lng: fromStop.lng },
-    toStop: { id: toStop.id, name: toStop.name, lat: toStop.lat, lng: toStop.lng },
-    direct,
-    transfers: transfersLimited,
-    message: direct.length === 0 && transfersLimited.length === 0 ? 'No direct route or single-transfer path found.' : null,
+    fromStop: result.from,
+    toStop: result.to,
+    direct: result.direct?.map(d => ({
+      routeId: `route_${d.route.id}`,
+      ref: d.route.ref,
+      name: d.route.name,
+      colour: d.route.colour,
+      allStops: d.stops?.map(s => ({
+        id: `stop_${s.stop?.stop_id}`,
+        name: s.stop?.stop_name || '',
+        lat: parseFloat(s.stop?.stop_lat) || 0,
+        lng: parseFloat(s.stop?.stop_lon) || 0,
+      })).filter(s => s.lat && s.lng) || [],
+    })) || [],
+    transfers: result.transfers?.map(t => ({
+      viaStopId: `stop_${t.transfer.stopId}`,
+      viaStopName: t.transfer.stopName,
+      leg1: { routeId: `route_${t.leg1.route.id}`, ref: t.leg1.route.ref, name: t.leg1.route.name, colour: t.leg1.route.colour },
+      leg2: { routeId: `route_${t.leg2.route.id}`, ref: t.leg2.route.ref, name: t.leg2.route.name, colour: t.leg2.route.colour },
+    })) || [],
+    message: result.message,
   });
 });
 
 // ─── MAP GEOMETRY API ────────────────────────────────────────────────────────
 app.get('/api/map/routes', (req, res) => {
-  const geoRoutes = realRoutes.map(r => ({
+  const geoRoutes = simplifiedRoutes.map(r => ({
     id: r.id, ref: r.ref, name: r.name, colour: r.colour, active: r.active, geometry: r.geometry,
   }));
   res.json(geoRoutes);
+});
+
+// ─── TRANSIT GTFS API (Real Schedules & Arrivals) ─────────────────────────────
+app.get('/api/transit/routes', (req, res) => {
+  res.json(simplifiedRoutes.map(r => ({
+    id: r.id, ref: r.ref, name: r.name,
+    colour: r.colour, stopsCount: r.stops?.length || 0,
+  })));
+});
+
+app.get('/api/transit/routes/:id', (req, res) => {
+  const route = simplifiedRoutes.find(r => r.id === req.params.id);
+  if (!route) return res.status(404).json({ error: 'Route not found' });
+  if (!gtfs) return res.status(503).json({ error: 'GTFS not loaded' });
+
+  const stopsInOrder = gtfs.getRouteStopsInOrder(route.route_id);
+  const schedule = gtfs.getRouteSchedule(route.route_id);
+
+  res.json({
+    id: route.id, ref: route.ref, name: route.name, colour: route.colour,
+    stops: stopsInOrder || [],
+    schedule: schedule?.schedule?.slice(0, 20) || [],
+  });
+});
+
+app.get('/api/transit/stops', (req, res) => {
+  const { q, route } = req.query;
+  let results = simplifiedStops;
+  if (q) results = results.filter(s => s.name.toLowerCase().includes(q.toLowerCase()));
+  if (route) results = results.filter(s => s.routes.some(r => r.ref === route));
+  res.json(results.slice(0, 100));
+});
+
+app.get('/api/transit/stops/:id', (req, res) => {
+  const stop = simplifiedStops.find(s => s.id === req.params.id);
+  if (!stop) return res.status(404).json({ error: 'Stop not found' });
+  if (!gtfs) return res.status(503).json({ error: 'GTFS not loaded' });
+
+  res.json({
+    id: stop.id, name: stop.name, lat: stop.lat, lng: stop.lng,
+    routes: stop.routes,
+    arrivals: gtfs.getStopArrivals(stop.stop_id, 20),
+  });
+});
+
+app.get('/api/transit/stops/:id/arrivals', (req, res) => {
+  const stop = simplifiedStops.find(s => s.id === req.params.id);
+  if (!stop) return res.status(404).json({ error: 'Stop not found' });
+  if (!gtfs) return res.status(503).json({ error: 'GTFS not loaded' });
+
+  const limit = parseInt(req.query.limit) || 15;
+  res.json({ stopId: stop.id, stopName: stop.name, arrivals: gtfs.getStopArrivals(stop.stop_id, limit) });
+});
+
+// ─── JOURNEY PLANNER (primary) ────────────────────────────────────────────────
+// FIX: transform stops from GTFSData shape → frontend-expected shape
+// GTFSData.getTripStops() returns: { stop: { stop_id, stop_name, stop_lat, stop_lon }, arrivalTime, departureTime, sequence }
+// Frontend expects:               { id, name, lat, lng, arrivalTime, departureTime, sequence }
+
+function transformStops(rawStops) {
+  return (rawStops || [])
+    .map(s => {
+      const lat = parseFloat(s.stop?.stop_lat);
+      const lng = parseFloat(s.stop?.stop_lon);
+      return {
+        id: s.stop?.stop_id ? `stop_${s.stop.stop_id}` : null,
+        name: s.stop?.stop_name || null,
+        lat: isFinite(lat) && lat !== 0 ? lat : null,
+        lng: isFinite(lng) && lng !== 0 ? lng : null,
+        arrivalTime: s.arrivalTime || null,
+        departureTime: s.departureTime || null,
+        sequence: s.sequence || 0,
+      };
+    })
+    .filter(s => s.lat !== null && s.lng !== null); // drop stops with no valid coordinates
+}
+
+app.post('/api/transit/journey', async (req, res) => {
+  const { fromStopId, toStopId, from: fromCoord, to: toCoord } = req.body || {};
+
+  console.log(`[Journey] fromStopId=${fromStopId} toStopId=${toStopId}`);
+
+  if (!gtfs) return res.status(503).json({ error: 'GTFS not loaded. Please restart the server.' });
+
+  let fromStop = null, toStop = null;
+
+  // ── Resolve 'from' ────────────────────────────────────────────────────────
+  if (fromCoord && fromCoord.lat != null && fromCoord.lng != null) {
+    const result = findNearestStops(fromCoord.lat, fromCoord.lng, 1000);
+    if (!result.stop) {
+      return res.json({
+        from: { lat: fromCoord.lat, lng: fromCoord.lng, name: fromCoord.name || 'Your location' },
+        to: toCoord ? { lat: toCoord.lat, lng: toCoord.lng, name: toCoord.name || 'Destination' } : null,
+        walkingLegs: [], direct: [], transfers: [],
+        message: 'No nearby transit available near your starting location.',
+      });
+    }
+    fromStop = result.stop;
+  } else if (fromStopId) {
+    fromStop = simplifiedStops.find(s => s.id === fromStopId);
+  }
+
+  // ── Resolve 'to' ─────────────────────────────────────────────────────────
+  if (toCoord && toCoord.lat != null && toCoord.lng != null) {
+    const result = findNearestStops(toCoord.lat, toCoord.lng, 1000);
+    if (!result.stop) {
+      return res.json({
+        from: fromStop ? { id: fromStop.id, name: fromStop.name, lat: fromStop.lat, lng: fromStop.lng }
+                       : { lat: fromCoord?.lat, lng: fromCoord?.lng, name: fromCoord?.name },
+        to: { lat: toCoord.lat, lng: toCoord.lng, name: toCoord.name || 'Destination' },
+        walkingLegs: [], direct: [], transfers: [],
+        message: 'No nearby transit available near your destination.',
+      });
+    }
+    toStop = result.stop;
+  } else if (toStopId) {
+    toStop = simplifiedStops.find(s => s.id === toStopId);
+  }
+
+  if (!fromStop || !toStop) {
+    return res.status(400).json({ error: 'Could not resolve stops. Please try selecting stops from the list.' });
+  }
+  if (fromStop.id === toStop.id) {
+    return res.json({
+      from: { id: fromStop.id, name: fromStop.name, lat: fromStop.lat, lng: fromStop.lng },
+      to:   { id: toStop.id,   name: toStop.name,   lat: toStop.lat,   lng: toStop.lng },
+      walkingLegs: [], direct: [], transfers: [],
+      message: 'Same origin and destination.',
+    });
+  }
+
+  // ── GTFS journey plan ────────────────────────────────────────────────────
+  const gtfsFromId = fromStop.stop_id;
+  const gtfsToId = toStop.stop_id;
+
+  console.log(`[Journey] gtfs.stopsMap has from=${gtfs.stopsMap.has(gtfsFromId)} to=${gtfs.stopsMap.has(gtfsToId)}`);
+  console.log(`[Journey] gtfs.stopTimesByStop has from=${gtfs.stopTimesByStop.has(gtfsFromId)} to=${gtfs.stopTimesByStop.has(gtfsToId)}`);
+
+  const gtfsResult = gtfs.planJourney(gtfsFromId, gtfsToId);
+  console.log(`[Journey] planJourney result: direct=${gtfsResult.direct?.length} transfers=${gtfsResult.transfers?.length} message=${gtfsResult.message}`);
+
+  res.json({
+    from: { id: fromStop.id, name: fromStop.name, lat: fromStop.lat, lng: fromStop.lng },
+    to:   { id: toStop.id,   name: toStop.name,   lat: toStop.lat,   lng: toStop.lng },
+    walkingLegs: [],
+    direct: (gtfsResult.direct || []).map(d => ({
+      type: 'direct',
+      route: { ...d.route, id: `route_${d.route.id}` },
+      departure: d.departure,
+      arrival: d.arrival,
+      duration: d.duration,
+      intermediateStops: d.intermediateStops,
+      // FIX: transform stops to { id, name, lat, lng, arrivalTime, departureTime, sequence }
+      stops: transformStops(d.stops),
+    })),
+    transfers: (gtfsResult.transfers || []).map(t => ({
+      type: 'transfer',
+      leg1: { ...t.leg1, route: { ...t.leg1.route, id: `route_${t.leg1.route.id}` } },
+      leg2: { ...t.leg2, route: { ...t.leg2.route, id: `route_${t.leg2.route.id}` } },
+      transfer: t.transfer,
+      totalDuration: t.totalDuration,
+    })),
+    message: gtfsResult.error || gtfsResult.message,
+  });
 });
 
 // ─── SIMULATED ROUTE PLANNER ─────────────────────────────────────────────────
@@ -298,20 +465,20 @@ app.post('/api/routes/plan', (req, res) => {
   const { from, to, fromStopId, toStopId } = req.body;
 
   if (fromStopId && toStopId) {
-    const fromStop = realStops.find(s => s.id === fromStopId);
-    const toStop = realStops.find(s => s.id === toStopId);
+    const fromStop = simplifiedStops.find(s => s.id === fromStopId);
+    const toStop = simplifiedStops.find(s => s.id === toStopId);
     if (fromStop && toStop) {
       const fromRefs = new Set(fromStop.routes.map(r => r.ref));
       const directRefs = toStop.routes.filter(r => fromRefs.has(r.ref)).map(r => r.ref);
       const directOptions = directRefs.map(ref => {
-        const route = realRoutes.find(r => r.ref === ref);
+        const route = simplifiedRoutes.find(r => r.ref === ref);
         return { routeId: route?.id, routeRef: ref, routeName: route?.name || ref, colour: route?.colour || '#888', type: 'direct', transfers: 0 };
       });
       return res.json({ from: fromStop.name, to: toStop.name, options: directOptions, message: directOptions.length === 0 ? 'No direct route found.' : null });
     }
   }
 
-  const options = realRoutes.filter(r => r.active).slice(0, 3).map((r, i) => ({
+  const options = simplifiedRoutes.filter(r => r.active).slice(0, 3).map((r, i) => ({
     routeId: r.id,
     routeNumber: r.ref,
     routeName: r.name,
@@ -338,7 +505,7 @@ app.get('/api/vehicles', auth, (req, res) => {
 app.get('/api/tracking', (req, res) => {
   res.json(vehicles.map(v => ({
     ...v,
-    route: realRoutes.find(r => r.id === v.routeId),
+    route: simplifiedRoutes.find(r => r.id === v.routeId),
   })));
 });
 
@@ -350,8 +517,8 @@ app.get('/api/tickets', auth, async (req, res) => {
       const ticketObj = t.toObject();
       return {
         ...ticketObj,
-        id: ticketObj._id, // frontend uses 'id'
-        route: ticketObj.routeId ? realRoutes.find(r => r.id === ticketObj.routeId) : null
+        id: ticketObj._id,
+        route: ticketObj.routeId ? simplifiedRoutes.find(r => r.id === ticketObj.routeId) : null
       };
     });
     res.json(response);
@@ -370,7 +537,6 @@ app.post('/api/tickets/purchase', auth, async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
     if (user.balance < price) return res.status(400).json({ error: 'Insufficient balance' });
 
-    // Deduct balance
     user.balance -= price;
     await user.save();
 
@@ -462,9 +628,9 @@ app.get('/api/admin/analytics', auth, adminOnly, async (req, res) => {
 
     res.json({
       totalUsers,
-      totalRoutes: realRoutes.length,
-      activeRoutes: realRoutes.filter(r => r.active).length,
-      totalStops: realStops.length,
+      totalRoutes: simplifiedRoutes.length,
+      activeRoutes: simplifiedRoutes.filter(r => r.active).length,
+      totalStops: simplifiedStops.length,
       totalVehicles: vehicles.length,
       movingVehicles: vehicles.filter(v => v.status === 'moving').length,
       totalTicketsSold,
@@ -480,7 +646,7 @@ app.get('/api/admin/analytics', auth, adminOnly, async (req, res) => {
         { day: 'Sat', riders: 9800 },
         { day: 'Sun', riders: 7200 },
       ],
-      routePerformance: realRoutes.slice(0, 10).map(r => ({
+      routePerformance: simplifiedRoutes.slice(0, 10).map(r => ({
         number: r.ref,
         name: r.from || r.name.split(':')[0],
         onTime: Math.floor(75 + Math.random() * 20),
@@ -503,11 +669,11 @@ app.get('/api/admin/users', auth, adminOnly, async (req, res) => {
 });
 
 app.get('/api/admin/vehicles', auth, adminOnly, (req, res) => {
-  res.json(vehicles.map(v => ({ ...v, route: realRoutes.find(r => r.id === v.routeId) })));
+  res.json(vehicles.map(v => ({ ...v, route: simplifiedRoutes.find(r => r.id === v.routeId) })));
 });
 
 app.patch('/api/admin/routes/:id', auth, adminOnly, (req, res) => {
-  const route = realRoutes.find(r => r.id === req.params.id);
+  const route = simplifiedRoutes.find(r => r.id === req.params.id);
   if (!route) return res.status(404).json({ error: 'Route not found' });
   Object.assign(route, req.body);
   res.json(route);
@@ -535,7 +701,7 @@ app.get('/api/geocode', async (req, res) => {
   }
 });
 
-// ─── NEAREST STOP ────────────────────────────────────────────────────────────
+// ─── NEAREST STOP HELPERS ────────────────────────────────────────────────────
 function haversineM(lat1, lng1, lat2, lng2) {
   const R = 6371000;
   const toRad = d => (d * Math.PI) / 180;
@@ -545,25 +711,66 @@ function haversineM(lat1, lng1, lat2, lng2) {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
-app.post('/api/nearest-stop', (req, res) => {
-  const { lat, lng } = req.body;
-  if (lat == null || lng == null) return res.status(400).json({ error: 'lat and lng are required' });
-
+function findNearestStops(lat, lng, maxMeters = 1000) {
   let bestStop = null;
   let bestDist = Infinity;
-  for (const stop of realStops) {
+  for (const stop of simplifiedStops) {
     const d = haversineM(lat, lng, stop.lat, stop.lng);
     if (d < bestDist) {
       bestDist = d;
       bestStop = stop;
     }
   }
+  const result = { stop: bestDist <= maxMeters ? bestStop : null, distanceM: Math.round(bestDist) };
+  console.log(`[NearestStop] lat=${lat} lng=${lng} maxM=${maxMeters} → found=${!!result.stop} "${result.stop?.name}" dist=${result.distanceM}m`);
+  return result;
+}
 
+async function fetchWalkingRoute(from, to) {
+  if (!ORS_API_KEY) {
+    console.log('[WalkingRoute] Skipped: ORS_API_KEY not set');
+    return null;
+  }
+  try {
+    const url = 'https://api.openrouteservice.org/v2/directions/foot-walking/geojson';
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': ORS_API_KEY },
+      body: JSON.stringify({ coordinates: [from, to] }),
+    });
+    if (!response.ok) {
+      console.log(`[WalkingRoute] ORS error: ${response.status}`);
+      return null;
+    }
+    const data = await response.json();
+    const feature = data.features?.[0];
+    if (!feature) {
+      console.log('[WalkingRoute] No route found from ORS');
+      return null;
+    }
+    const result = {
+      geometry: feature.geometry,
+      distance_m: Math.round(feature.properties?.summary?.distance || 0),
+      duration_s: Math.round(feature.properties?.summary?.duration || 0),
+    };
+    console.log(`[WalkingRoute] OK: ${result.distance_m}m ${Math.round(result.duration_s / 60)}min`);
+    return result;
+  } catch (err) {
+    console.log(`[WalkingRoute] Exception: ${err.message}`);
+    return null;
+  }
+}
+
+app.post('/api/nearest-stop', (req, res) => {
+  const { lat, lng } = req.body;
+  if (lat == null || lng == null) return res.status(400).json({ error: 'lat and lng are required' });
+
+  const { stop, distanceM } = findNearestStops(lat, lng, 500);
   res.json({
-    stop: bestStop,
-    distanceM: Math.round(bestDist),
-    withinRadius: bestDist <= 500,
-    message: !bestStop || bestDist > 500 ? 'No stops found within 500 m' : null,
+    stop,
+    distanceM,
+    withinRadius: distanceM <= 500,
+    message: !stop ? 'No stops found within 500 m' : null,
   });
 });
 
@@ -607,12 +814,26 @@ app.get('/api/institutions', (req, res) => {
 // ─── START SERVER ────────────────────────────────────────────────────────────
 const PORT = 3001;
 
-// Connect to MongoDB, then start Express
-connectDB().then(() => {
+async function startServer() {
+  await connectDB();
+  await initGTFS();
+  initializeVehicles();
+  scheduleWeeklyRefresh();
+
   app.listen(PORT, () => {
-    console.log(`Tirana Transit API running on http://localhost:${PORT}`);
-    console.log(`  Routes: ${realRoutes.length}`);
-    console.log(`  Stops:  ${realStops.length}`);
+    console.log(`\nTirana Transit API running on http://localhost:${PORT}`);
+    console.log(`  Stops:  ${simplifiedStops.length}`);
     console.log(`  Institutions: ${institutions.length}`);
+    if (gtfs) {
+      console.log(`  GTFS: ${gtfs.routes.length} routes, ${gtfs.stops.length} stops, ${gtfs.stopTimes.length} stopTimes`);
+      console.log(`  GTFS active services: ${gtfs.activeServices.size}`);
+    } else {
+      console.log('  GTFS: DISABLED (init failed)');
+    }
   });
+}
+
+startServer().catch(err => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
 });

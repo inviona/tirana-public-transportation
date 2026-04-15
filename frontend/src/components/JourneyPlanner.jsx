@@ -77,6 +77,20 @@ function instColor(type) {
   return INST_COLORS[type] || '#8892a4';
 }
 
+/* ─── helper: check if a stop has valid coordinates ─────────────────────────── */
+// FIX: guards against null, undefined, 0, or non-finite lat/lng values
+function hasValidCoords(stop) {
+  return (
+    stop != null &&
+    typeof stop.lat === 'number' &&
+    typeof stop.lng === 'number' &&
+    isFinite(stop.lat) &&
+    isFinite(stop.lng) &&
+    stop.lat !== 0 &&
+    stop.lng !== 0
+  );
+}
+
 /* ─── stop search field ─────────────────────────────────────────────────────── */
 
 function StopSearchField({
@@ -175,7 +189,7 @@ function StopSearchField({
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 export default function JourneyPlanner() {
-  /* ─── existing state ─────────────────────────────────────────────────────── */
+  /* ─── data state ─────────────────────────────────────────────────────────── */
   const [stops, setStops] = useState([]);
   const [mapRoutes, setMapRoutes] = useState([]);
   const [fromInput, setFromInput] = useState('');
@@ -191,7 +205,7 @@ export default function JourneyPlanner() {
   const [plan, setPlan] = useState(null);
   const [highlight, setHighlight] = useState(null);
 
-  /* ─── NEW state: address → nearest stop → walking route ──────────────────── */
+  /* ─── address search state ───────────────────────────────────────────────── */
   const [addressInput, setAddressInput] = useState('');
   const [geocodeResults, setGeocodeResults] = useState([]);
   const [geocodeOpen, setGeocodeOpen] = useState(false);
@@ -202,7 +216,7 @@ export default function JourneyPlanner() {
   const [walkingLoading, setWalkingLoading] = useState(false);
   const [findRouteError, setFindRouteError] = useState('');
 
-  /* ─── NEW state: institutions ────────────────────────────────────────────── */
+  /* ─── institutions state ─────────────────────────────────────────────────── */
   const [institutions, setInstitutions] = useState([]);
   const [showInstitutions, setShowInstitutions] = useState(false);
 
@@ -317,7 +331,6 @@ export default function JourneyPlanner() {
     setWalkingLoading(true);
 
     try {
-      // 1. Find nearest stop
       const stopRes = await fetch(`${API}/api/nearest-stop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -332,7 +345,6 @@ export default function JourneyPlanner() {
         return;
       }
 
-      // 2. Get walking route from address to nearest stop
       const walkRes = await fetch(`${API}/api/walking-route`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -409,23 +421,40 @@ export default function JourneyPlanner() {
     );
   };
 
-  /* ─── stop-to-stop planner ───────────────────────────────────────────────── */
+  /* ─── stop-to-stop journey planner ───────────────────────────────────────── */
   const runPlan = async () => {
-    if (!fromStop || !toStop) return;
-    setPlanLoading(true);
+    if (!fromStop && !selectedAddress) return;
+    if (!toStop) return;
+
+    // FIX: reset all result/error state at the start of each new search
+    // so stale results from the previous query never linger on screen
     setPlan(null);
     setHighlight(null);
+
+    setPlanLoading(true);
     try {
-      const res = await fetch(`${API}/api/journey/plan`, {
+      const body = { toStopId: toStop.id };
+
+      if (selectedAddress) {
+        body.from = {
+          lat: selectedAddress.lat,
+          lng: selectedAddress.lng,
+          name: selectedAddress.display_name?.split(',')[0] || 'Your location',
+        };
+      } else if (fromStop) {
+        body.fromStopId = fromStop.id;
+      }
+
+      const res = await fetch(`${API}/api/transit/journey`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fromStopId: fromStop.id, toStopId: toStop.id }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Plan failed');
       setPlan(data);
-    } catch {
-      setPlan({ error: 'Could not load journey plan. Is the API running?' });
+    } catch (err) {
+      setPlan({ error: err.message || 'Could not load journey plan. Is the API running?' });
     } finally {
       setPlanLoading(false);
     }
@@ -458,6 +487,73 @@ export default function JourneyPlanner() {
     return rows;
   }, [highlight, routesById]);
 
+  // FIX: routeStopsForHighlight now reads stop.name (not stop.stop_name),
+  // and uses stop.lat / stop.lng directly (server now sends the flat shape).
+  // Also guards against stops with null/zero coordinates.
+  const routeStopsForHighlight = useMemo(() => {
+    if (!highlight || !plan) return [];
+
+    if (highlight.kind === 'direct') {
+      const directOption = plan.direct?.find(d => (d.route?.id || '') === highlight.routeId);
+      if (directOption?.stops) {
+        // Server now sends: { id, name, lat, lng, arrivalTime, departureTime, sequence }
+        return directOption.stops
+          .filter(s => hasValidCoords(s))   // FIX: drop stops with 0/null coords
+          .map((s, i, arr) => ({
+            id: s.id || `stop_${i}`,
+            name: s.name || 'Unknown',       // FIX: read s.name, not s.stop?.stop_name
+            lat: s.lat,
+            lng: s.lng,
+            isStart: i === 0,
+            isEnd: i === arr.length - 1,
+          }));
+      }
+      return [];
+    }
+
+    if (highlight.kind === 'transfer') {
+      const transfer = plan.transfers?.find(t => {
+        const leg1RouteId = t.leg1?.route?.id || '';
+        const leg2RouteId = t.leg2?.route?.id || '';
+        const viaStopId = t.transfer?.stopId || '';
+        return (
+          leg1RouteId === highlight.routeId1 &&
+          leg2RouteId === highlight.routeId2 &&
+          viaStopId === highlight.viaStopId
+        );
+      });
+      const transferStop = transfer?.transfer || {};
+
+      const viaLat = parseFloat(transferStop.lat);
+      const viaLng = parseFloat(transferStop.lng);
+
+      const pts = [];
+
+      // origin
+      if (hasValidCoords(plan.from)) {
+        pts.push({ ...plan.from, isStart: true });
+      }
+      // transfer point
+      if (isFinite(viaLat) && viaLat !== 0 && isFinite(viaLng) && viaLng !== 0) {
+        pts.push({
+          id: highlight.viaStopId,
+          name: highlight.viaName || 'Transfer',
+          lat: viaLat,
+          lng: viaLng,
+          isTransfer: true,
+        });
+      }
+      // destination
+      if (hasValidCoords(plan.to)) {
+        pts.push({ ...plan.to, isEnd: true });
+      }
+
+      return pts;
+    }
+
+    return [];
+  }, [highlight, plan]);
+
   /* ─── walking path as Leaflet positions ──────────────────────────────────── */
   const walkingPositions = useMemo(() => {
     if (!walkingRoute?.geometry) return [];
@@ -465,24 +561,49 @@ export default function JourneyPlanner() {
   }, [walkingRoute]);
 
   /* ─── map bounds ─────────────────────────────────────────────────────────── */
+  // FIX: only extend bounds with stops that have valid, non-zero coordinates
   const bounds = useMemo(() => {
     const b = L.latLngBounds([]);
     let any = false;
-    const extend = (pt) => { b.extend(pt); any = true; };
+    const extend = (pt) => {
+      // Guard: skip [0,0] or invalid lat/lng which would zoom map to Africa
+      const lat = Array.isArray(pt) ? pt[0] : pt?.lat;
+      const lng = Array.isArray(pt) ? pt[1] : pt?.lng;
+      if (!isFinite(lat) || !isFinite(lng) || lat === 0 || lng === 0) return;
+      b.extend(Array.isArray(pt) ? pt : [lat, lng]);
+      any = true;
+    };
 
     highlightedPolylines.forEach((route) => {
       geometryToLeafletSegments(route.geometry).forEach((seg) => seg.forEach(extend));
     });
     walkingPositions.forEach(extend);
 
-    if (fromStop) extend([fromStop.lat, fromStop.lng]);
-    if (toStop) extend([toStop.lat, toStop.lng]);
+    (plan?.walkingLegs || []).forEach(leg => {
+      extend([leg.from.lat, leg.from.lng]);
+      extend([leg.to.lat, leg.to.lng]);
+      if (leg.geometry) {
+        orsGeometryToLeaflet(leg.geometry).forEach(pt => extend(pt));
+      }
+    });
+
+    if (fromStop && hasValidCoords(fromStop)) extend([fromStop.lat, fromStop.lng]);
+    if (toStop && hasValidCoords(toStop)) extend([toStop.lat, toStop.lng]);
     if (selectedAddress) extend([selectedAddress.lat, selectedAddress.lng]);
-    if (nearestStopResult?.stop) extend([nearestStopResult.stop.lat, nearestStopResult.stop.lng]);
-    if (highlight?.kind === 'transfer' && highlight.viaLat != null) extend([highlight.viaLat, highlight.viaLng]);
+    if (nearestStopResult?.stop && hasValidCoords(nearestStopResult.stop)) {
+      extend([nearestStopResult.stop.lat, nearestStopResult.stop.lng]);
+    }
+    if (highlight?.kind === 'transfer' && highlight.viaLat != null) {
+      extend([highlight.viaLat, highlight.viaLng]);
+    }
+
+    // FIX: extend bounds to all valid route stops so the map fits the full route
+    routeStopsForHighlight.forEach(s => {
+      if (hasValidCoords(s)) extend([s.lat, s.lng]);
+    });
 
     return any ? b : null;
-  }, [highlightedPolylines, walkingPositions, fromStop, toStop, selectedAddress, nearestStopResult, highlight]);
+  }, [highlightedPolylines, walkingPositions, fromStop, toStop, selectedAddress, nearestStopResult, highlight, routeStopsForHighlight, plan]);
 
   /* ═══════════════════════════════════════════════════════════════════════════
      RENDER
@@ -500,7 +621,7 @@ export default function JourneyPlanner() {
         <p style={{ color: 'var(--muted)' }}>Search an address or pick stops to find your best transit route.</p>
       </div>
 
-      {/* ─── FIND ROUTE FROM ADDRESS (NEW) ─────────────────────────────────── */}
+      {/* ─── FIND ROUTE FROM ADDRESS ────────────────────────────────────────── */}
       <div className="card" style={{ marginBottom: 20, borderColor: selectedAddress ? 'rgba(78,158,255,0.35)' : 'var(--border)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
           <div style={{ background: 'rgba(78,158,255,0.15)', borderRadius: 8, padding: 6, display: 'flex' }}>
@@ -598,7 +719,6 @@ export default function JourneyPlanner() {
 
         {nearestStopResult && !walkingLoading && (
           <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {/* Nearest stop info */}
             <div style={{ padding: '16px 20px', borderRadius: 12, background: 'var(--bg3)', border: '1px solid var(--border)' }}>
               <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', marginBottom: 8 }}>Nearest Bus Stop</div>
               <div style={{ fontSize: 16, fontFamily: 'Syne', fontWeight: 700, marginBottom: 4 }}>{nearestStopResult.stop?.name || '—'}</div>
@@ -612,7 +732,6 @@ export default function JourneyPlanner() {
                   </span>
                 )}
               </div>
-              {/* Quick action: use this stop as "From" in the planner */}
               {nearestStopResult.stop && (
                 <button
                   type="button"
@@ -628,7 +747,6 @@ export default function JourneyPlanner() {
               )}
             </div>
 
-            {/* Walking stats */}
             {walkingRoute && (
               <div style={{ padding: '16px 20px', borderRadius: 12, background: 'var(--bg3)', border: '1px solid var(--border)' }}>
                 <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', marginBottom: 8 }}>Walking Directions</div>
@@ -659,7 +777,7 @@ export default function JourneyPlanner() {
         )}
       </div>
 
-      {/* ─── EXISTING STOP-TO-STOP PLANNER ─────────────────────────────────── */}
+      {/* ─── STOP-TO-STOP PLANNER ───────────────────────────────────────────── */}
       <div className="card" style={{ marginBottom: 20 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 16, alignItems: 'end' }}>
           <div ref={fromWrapRef}>
@@ -694,7 +812,7 @@ export default function JourneyPlanner() {
             type="button"
             className="btn btn-primary"
             onClick={runPlan}
-            disabled={planLoading || !fromStop || !toStop || loadingStops}
+            disabled={planLoading || (!fromStop && !selectedAddress) || !toStop || loadingStops}
             style={{ padding: '10px 24px', height: 42, whiteSpace: 'nowrap' }}
           >
             <Search size={15} /> {planLoading ? 'Planning…' : 'Find routes'}
@@ -768,7 +886,7 @@ export default function JourneyPlanner() {
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
               scrollWheelZoom
             >
-              <MapResizeNotifier trigger={highlight || walkingRoute} />
+              <MapResizeNotifier trigger={highlight || walkingRoute || plan} />
               <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
               {bounds && <FitBounds bounds={bounds} />}
 
@@ -783,7 +901,7 @@ export default function JourneyPlanner() {
                 )),
               )}
 
-              {/* Walking path */}
+              {/* Walking path (address → nearest stop) */}
               {walkingPositions.length > 0 && (
                 <Polyline
                   positions={walkingPositions}
@@ -791,7 +909,16 @@ export default function JourneyPlanner() {
                 />
               )}
 
-              {/* Address marker */}
+              {/* Journey plan walking legs */}
+              {(plan?.walkingLegs || []).map((leg, i) => (
+                <Polyline
+                  key={`walk-leg-${i}`}
+                  positions={orsGeometryToLeaflet(leg.geometry)}
+                  pathOptions={{ color: '#4e9eff', weight: 5, opacity: 0.9, dashArray: '10 8' }}
+                />
+              ))}
+
+              {/* Address pin */}
               {selectedAddress && (
                 <CircleMarker
                   center={[selectedAddress.lat, selectedAddress.lng]}
@@ -805,7 +932,7 @@ export default function JourneyPlanner() {
               )}
 
               {/* Nearest stop marker (green) */}
-              {nearestStopResult?.stop && (
+              {nearestStopResult?.stop && hasValidCoords(nearestStopResult.stop) && (
                 <CircleMarker
                   center={[nearestStopResult.stop.lat, nearestStopResult.stop.lng]}
                   radius={9}
@@ -820,21 +947,84 @@ export default function JourneyPlanner() {
               )}
 
               {/* From / To stop markers */}
-              {fromStop && (
+              {fromStop && hasValidCoords(fromStop) && (
                 <Marker position={[fromStop.lat, fromStop.lng]}>
                   <Popup>From: {fromStop.name}</Popup>
                 </Marker>
               )}
-              {toStop && (
+              {toStop && hasValidCoords(toStop) && (
                 <Marker position={[toStop.lat, toStop.lng]}>
                   <Popup>To: {toStop.name}</Popup>
                 </Marker>
               )}
+
+              {/* Walking leg origin markers */}
+              {(plan?.walkingLegs || []).map((leg, i) => (
+                <CircleMarker
+                  key={`walk-leg-marker-${i}`}
+                  center={[leg.from.lat, leg.from.lng]}
+                  radius={8}
+                  pathOptions={{ color: '#4e9eff', fillColor: '#4e9eff', fillOpacity: 0.85, weight: 2 }}
+                >
+                  <Tooltip direction="top" offset={[0, -6]} opacity={1} permanent>
+                    <span style={{ fontWeight: 600 }}>🚶 {leg.from.name}</span>
+                  </Tooltip>
+                </CircleMarker>
+              ))}
+
+              {/* Transfer stop marker (if transfer highlighted) */}
               {highlight?.kind === 'transfer' && highlight.viaLat != null && (
                 <Marker position={[highlight.viaLat, highlight.viaLng]}>
                   <Popup>Change: {highlight.viaName}</Popup>
                 </Marker>
               )}
+
+              {/* FIX: Route stops along highlighted route.
+                  Only render stops where hasValidCoords() passes.
+                  START = stops[0], END = stops[last]; colour-coded accordingly.
+                  Name reads from stop.name (the flat field the server now sends). */}
+              {routeStopsForHighlight.map((stop, idx) => (
+                <CircleMarker
+                  key={stop.id || idx}
+                  center={[stop.lat, stop.lng]}
+                  radius={stop.isStart || stop.isEnd || stop.isTransfer ? 10 : 7}
+                  pathOptions={{
+                    color: stop.isTransfer
+                      ? '#fbbf24'
+                      : stop.isStart
+                        ? '#22c55e'
+                        : stop.isEnd
+                          ? '#ef4444'
+                          : '#4e9eff',
+                    fillColor: stop.isTransfer
+                      ? '#fbbf24'
+                      : stop.isStart
+                        ? '#22c55e'
+                        : stop.isEnd
+                          ? '#ef4444'
+                          : '#4e9eff',
+                    fillOpacity: 0.9,
+                    weight: 3,
+                  }}
+                >
+                  <Tooltip
+                    direction="top"
+                    offset={[0, -8]}
+                    opacity={1}
+                    permanent={idx === 0 || idx === routeStopsForHighlight.length - 1}
+                  >
+                    <span style={{ fontWeight: 600 }}>
+                      {stop.isStart
+                        ? `🟢 ${stop.name}`
+                        : stop.isEnd
+                          ? `🔴 ${stop.name}`
+                          : stop.isTransfer
+                            ? `🟡 ${stop.name}`
+                            : `🚏 ${stop.name}`}
+                    </span>
+                  </Tooltip>
+                </CircleMarker>
+              ))}
 
               {/* Institutions layer */}
               {showInstitutions && institutions.map((inst) => (
@@ -855,75 +1045,133 @@ export default function JourneyPlanner() {
 
         {/* ─── RESULTS SIDEBAR ───────────────────────────────────────────── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxHeight: 520, overflowY: 'auto' }}>
-          {plan?.error && <div className="card" style={{ borderColor: 'var(--red)', color: 'var(--red)', fontSize: 13 }}>{plan.error}</div>}
+          {plan?.error && (
+            <div className="card" style={{ borderColor: 'var(--red)', color: 'var(--red)', fontSize: 13 }}>
+              {plan.error}
+            </div>
+          )}
 
           {plan && !plan.error && (
             <>
               <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                <strong style={{ color: 'var(--text)' }}>{plan.fromStop?.name}</strong>
+                <strong style={{ color: 'var(--text)' }}>
+                  {selectedAddress?.display_name?.split(',')[0] || plan.from?.name}
+                </strong>
                 <ArrowRight size={12} style={{ display: 'inline', verticalAlign: 'middle', margin: '0 6px' }} />
-                <strong style={{ color: 'var(--text)' }}>{plan.toStop?.name}</strong>
+                <strong style={{ color: 'var(--text)' }}>{plan.to?.name}</strong>
               </div>
 
               {plan.message && (
-                <div className="card" style={{ fontSize: 13, color: 'var(--muted)' }}>
+                <div className="card" style={{
+                  fontSize: 13,
+                  color: plan.message.includes('No nearby') ? 'var(--red)' : 'var(--muted)',
+                  borderColor: plan.message.includes('No nearby') ? 'rgba(239,68,68,0.3)' : 'var(--border)',
+                }}>
                   {plan.message}
                 </div>
               )}
 
+              {/* Walking legs */}
+              {plan.walkingLegs?.length > 0 && plan.walkingLegs.map((leg, i) => (
+                <div key={i} className="card" style={{ borderColor: 'rgba(78,158,255,0.3)', background: 'rgba(78,158,255,0.06)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                    <div style={{ fontSize: 18 }}>🚶</div>
+                    <div style={{ fontFamily: 'Syne', fontWeight: 700, fontSize: 13 }}>
+                      {leg.kind === 'walk_to_stop' ? 'Walk to bus stop' : 'Walk to destination'}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>
+                    <div>From <strong style={{ color: 'var(--text)' }}>{leg.from.name}</strong></div>
+                    <div style={{ margin: '2px 0 2px 16px', color: 'var(--accent2)', fontSize: 11 }}>
+                      {leg.distanceM ? `${leg.distanceM} m, ~${formatDuration(leg.durationS)}` : `~${formatDuration(leg.durationS)} walk`}
+                    </div>
+                    <div>To <strong style={{ color: 'var(--text)' }}>{leg.to.name}</strong></div>
+                  </div>
+                </div>
+              ))}
+
+              {/* Direct routes */}
               {plan.direct?.length > 0 && (
                 <div>
                   <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', marginBottom: 8 }}>Direct</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {plan.direct.map((d) => {
-                      const active = highlight?.kind === 'direct' && highlight.routeId === d.routeId;
+                    {plan.direct.map((d, idx) => {
+                      const routeId = d.route?.id || `direct_${idx}`;
+                      const routeRef = d.route?.ref || '?';
+                      const routeName = d.route?.name || '';
+                      const routeColour = d.route?.colour || '#4e9eff';
+                      // FIX: stops now have flat { id, name, lat, lng } shape
+                      const allStops = (d.stops || []).filter(s => hasValidCoords(s));
+                      const active = highlight?.kind === 'direct' && highlight.routeId === routeId;
+
                       return (
                         <button
-                          key={d.routeId || d.ref}
+                          key={routeId}
                           type="button"
-                          onClick={() => setHighlight({ kind: 'direct', routeId: d.routeId })}
+                          onClick={() => setHighlight({ kind: 'direct', routeId })}
                           className="card"
                           style={{
                             padding: '12px 14px', cursor: 'pointer', textAlign: 'left',
-                            borderColor: active ? d.colour : 'var(--border)',
-                            background: active ? `${d.colour}14` : 'var(--card)',
+                            borderColor: active ? routeColour : 'var(--border)',
+                            background: active ? `${routeColour}14` : 'var(--card)',
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <div
                               style={{
-                                width: 40, height: 40, borderRadius: 10, background: d.colour,
+                                width: 40, height: 40, borderRadius: 10, background: routeColour,
                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                                 color: '#fff', fontFamily: 'Syne', fontWeight: 800, fontSize: 12, flexShrink: 0,
                               }}
                             >
-                              {d.ref}
+                              {routeRef}
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontFamily: 'Syne', fontWeight: 700 }}>Line {d.ref}</div>
-                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</div>
+                              <div style={{ fontFamily: 'Syne', fontWeight: 700 }}>Line {routeRef}</div>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{routeName}</div>
+                              {d.duration && (
+                                <div style={{ fontSize: 10, color: 'var(--accent2)', marginTop: 4 }}>
+                                  {d.duration} min · {d.departure?.time} → {d.arrival?.time}
+                                </div>
+                              )}
                             </div>
                           </div>
 
-                          {active && d.intermediateStops && d.intermediateStops.length > 0 && (
-                            <div style={{ marginTop: 16, paddingLeft: 20, position: 'relative' }}>
-                              <div style={{ position: 'absolute', left: 8, top: 4, bottom: 4, width: 2, background: d.colour, opacity: 0.3, borderRadius: 2 }} />
-                              
-                              <div style={{ position: 'relative', marginBottom: 10, fontSize: 12 }}>
-                                <div style={{ position: 'absolute', left: -16, top: 4, width: 6, height: 6, borderRadius: '50%', background: 'var(--accent3)' }} />
-                                <strong style={{ color: 'var(--text)' }}>{plan.fromStop?.name}</strong>
-                              </div>
-
-                              {d.intermediateStops.map((stop, i) => (
-                                <div key={i} style={{ position: 'relative', marginBottom: 6, fontSize: 11, color: 'var(--muted)' }}>
-                                  <div style={{ position: 'absolute', left: -15, top: 5, width: 4, height: 4, borderRadius: '50%', background: d.colour }} />
-                                  {stop.name}
-                                </div>
-                              ))}
-
-                              <div style={{ position: 'relative', marginTop: 10, fontSize: 12 }}>
-                                <div style={{ position: 'absolute', left: -16, top: 4, width: 6, height: 6, borderRadius: '50%', background: 'var(--red)' }} />
-                                <strong style={{ color: 'var(--text)' }}>{plan.toStop?.name}</strong>
+                          {active && allStops.length > 0 && (
+                            <div style={{ marginTop: 16 }}>
+                              <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', marginBottom: 12 }}>Route Stops</div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                                {allStops.map((stop, i) => (
+                                  <div key={stop.id || i} style={{ display: 'flex', alignItems: 'center', gap: 10, position: 'relative' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                      <div style={{
+                                        width: 12, height: 12, borderRadius: '50%',
+                                        background: i === 0 ? '#22c55e' : i === allStops.length - 1 ? '#ef4444' : routeColour,
+                                        border: '2px solid var(--bg)',
+                                        boxShadow: '0 0 0 2px var(--bg2)',
+                                        zIndex: 2,
+                                      }} />
+                                      {i < allStops.length - 1 && (
+                                        <div style={{ width: 2, height: 24, background: routeColour, opacity: 0.4 }} />
+                                      )}
+                                    </div>
+                                    <div style={{ flex: 1, paddingBottom: i < allStops.length - 1 ? 8 : 0 }}>
+                                      {/* FIX: read stop.name (flat field) not stop.stop?.stop_name */}
+                                      <div style={{
+                                        fontSize: 12,
+                                        fontWeight: i === 0 || i === allStops.length - 1 ? 600 : 400,
+                                        color: i === 0 || i === allStops.length - 1 ? 'var(--text)' : 'var(--muted)',
+                                      }}>
+                                        {stop.name}
+                                      </div>
+                                      {stop.departureTime && (
+                                        <div style={{ fontSize: 10, color: 'var(--muted)' }}>{stop.departureTime}</div>
+                                      )}
+                                      {i === 0 && <div style={{ fontSize: 10, color: '#22c55e' }}>START</div>}
+                                      {i === allStops.length - 1 && <div style={{ fontSize: 10, color: '#ef4444' }}>END</div>}
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
                             </div>
                           )}
@@ -934,48 +1182,72 @@ export default function JourneyPlanner() {
                 </div>
               )}
 
+              {/* Transfer routes */}
               {plan.transfers?.length > 0 && (
                 <div>
                   <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--muted)', marginBottom: 8 }}>One transfer</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {plan.transfers.map((t, idx) => {
+                      const leg1RouteId = t.leg1?.route?.id || `leg1_${idx}`;
+                      const leg2RouteId = t.leg2?.route?.id || `leg2_${idx}`;
+                      const viaStopId = t.transfer?.stopId || `via_${idx}`;
+                      const viaStopName = t.transfer?.stopName || 'Transfer stop';
+                      const leg1Colour = t.leg1?.route?.colour || '#4e9eff';
+                      const leg2Colour = t.leg2?.route?.colour || '#4e9eff';
+
                       const active =
                         highlight?.kind === 'transfer' &&
-                        highlight.routeId1 === t.leg1.routeId &&
-                        highlight.routeId2 === t.leg2.routeId &&
-                        highlight.viaStopId === t.viaStopId;
+                        highlight.routeId1 === leg1RouteId &&
+                        highlight.routeId2 === leg2RouteId &&
+                        highlight.viaStopId === viaStopId;
+
                       return (
                         <button
-                          key={`${t.viaStopId}-${t.leg1.ref}-${t.leg2.ref}-${idx}`}
+                          key={`${viaStopId}-${t.leg1?.route?.ref}-${t.leg2?.route?.ref}-${idx}`}
                           type="button"
                           onClick={() =>
                             setHighlight({
                               kind: 'transfer',
-                              routeId1: t.leg1.routeId,
-                              routeId2: t.leg2.routeId,
-                              viaStopId: t.viaStopId,
-                              viaLat: t.viaLat,
-                              viaLng: t.viaLng,
-                              viaName: t.viaStopName,
+                              routeId1: leg1RouteId,
+                              routeId2: leg2RouteId,
+                              viaStopId: viaStopId,
+                              viaName: viaStopName,
                             })
                           }
                           className="card"
                           style={{
                             padding: '12px 14px', cursor: 'pointer', textAlign: 'left',
-                            borderColor: active ? t.leg1.colour : 'var(--border)',
-                            background: active ? `${t.leg1.colour}12` : 'var(--card)',
+                            borderColor: active ? leg1Colour : 'var(--border)',
+                            background: active ? `${leg1Colour}12` : 'var(--card)',
                           }}
                         >
-                          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>Change at {t.viaStopName}</div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 13 }}>
-                            <span style={{ fontWeight: 700, color: t.leg1.colour }}>{t.leg1.ref}</span>
-                            <ArrowRight size={14} color="var(--muted)" />
-                            <span style={{ fontWeight: 700, color: t.leg2.colour }}>{t.leg2.ref}</span>
+                          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>
+                            Change at {viaStopName}
+                            {t.transfer?.waitTime > 0 && <span style={{ marginLeft: 6 }}>(wait {t.transfer.waitTime} min)</span>}
                           </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 13 }}>
+                            <span style={{ fontWeight: 700, color: leg1Colour }}>{t.leg1?.route?.ref}</span>
+                            <span style={{ color: 'var(--muted)' }}>{t.leg1?.departure?.time} → {t.leg1?.arrival?.time}</span>
+                            <ArrowRight size={14} color="var(--muted)" />
+                            <span style={{ fontWeight: 700, color: leg2Colour }}>{t.leg2?.route?.ref}</span>
+                            <span style={{ color: 'var(--muted)' }}>{t.leg2?.departure?.time} → {t.leg2?.arrival?.time}</span>
+                          </div>
+                          {t.totalDuration && (
+                            <div style={{ fontSize: 10, color: 'var(--accent2)', marginTop: 6 }}>
+                              Total: {t.totalDuration} min
+                            </div>
+                          )}
                         </button>
                       );
                     })}
                   </div>
+                </div>
+              )}
+
+              {/* No results */}
+              {!plan.message && plan.direct?.length === 0 && plan.transfers?.length === 0 && (
+                <div className="card" style={{ fontSize: 13, color: 'var(--muted)', textAlign: 'center', padding: 24 }}>
+                  No connections found between these stops.
                 </div>
               )}
             </>
@@ -997,3 +1269,5 @@ export default function JourneyPlanner() {
     </div>
   );
 }
+
+

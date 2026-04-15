@@ -1,0 +1,14 @@
+◇ injected env (3) from .env // tip: ⌘ enable debugging { debug: true }
+Loaded 100 institutions
+GTFS data loaded successfully
+Loaded 0 routes from GTFS
+Loaded 491 stops from GTFS
+GTFS Transit API endpoints loaded
+✓ Connected to MongoDB Atlas
+✓ Admin account already exists: admin@transit.al
+
+Tirana Transit API running on http://localhost:3001
+  Routes: 0
+  Stops:  491
+  Institutions: 100
+  GTFS Transit: Active (schedules, arrivals, journey planning)

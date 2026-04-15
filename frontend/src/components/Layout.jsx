@@ -1,6 +1,7 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { Bus, Map, Navigation, Ticket, LayoutDashboard, LogOut, Bell, Wallet } from 'lucide-react';
+import logo from '../logo.jpeg';
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -26,9 +27,7 @@ export default function Layout() {
         {/* Logo */}
         <div style={{ padding: '28px 24px 20px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ background: 'var(--accent)', borderRadius: 10, padding: 8, display: 'flex' }}>
-              <Bus size={18} color="#000" />
-            </div>
+            <img src={logo} alt="Logo" style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover' }} />
             <div>
               <div style={{ fontFamily: 'Syne', fontWeight: 800, fontSize: 15, color: 'var(--text)' }}>TIRANA</div>
               <div style={{ fontFamily: 'Syne', fontWeight: 400, fontSize: 10, color: 'var(--muted)', letterSpacing: 2 }}>TRANSIT</div>
@@ -43,9 +42,9 @@ export default function Layout() {
               display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px',
               borderRadius: 10, textDecoration: 'none', fontFamily: 'Syne', fontWeight: 600,
               fontSize: 13, transition: 'all 0.15s',
-              background: isActive ? 'rgba(232,184,75,0.12)' : 'transparent',
+              background: isActive ? 'rgba(207,10,44,0.12)' : 'transparent',
               color: isActive ? 'var(--accent)' : 'var(--muted)',
-              border: isActive ? '1px solid rgba(232,184,75,0.2)' : '1px solid transparent',
+              border: isActive ? '1px solid rgba(207,10,44,0.2)' : '1px solid transparent',
             })}>
               <Icon size={16} />
               {label}
@@ -72,8 +71,18 @@ export default function Layout() {
       </aside>
 
       {/* Main */}
-      <main style={{ flex: 1, overflow: 'auto', background: 'var(--bg)' }}>
-        <Outlet />
+      <main style={{ flex: 1, overflow: 'auto', background: 'var(--bg)', position: 'relative' }}>
+        <div style={{
+          position: 'absolute', inset: 0,
+          backgroundImage: 'url(./albanian_flag.png)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          opacity: 0.15,
+          pointerEvents: 'none'
+        }} />
+        <div style={{ position: 'relative', zIndex: 1 }}>
+          <Outlet />
+        </div>
       </main>
     </div>
   );

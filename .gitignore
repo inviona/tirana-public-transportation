@@ -10,6 +10,11 @@ backend/.env
 # Production Build Artifacts
 frontend/dist/
 
+# Large/generated GTFS data
+backend/gtfs_cache.json
+backend/routes_cache.json
+backend/tirana_gtfs.zip
+
 # Debug logs
 npm-debug.log*
 yarn-debug.log*

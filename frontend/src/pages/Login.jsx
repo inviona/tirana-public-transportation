@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { Bus, Eye, EyeOff } from 'lucide-react';
+import logo from '../logo.jpeg';
 
 export default function Login() {
   const { login } = useAuth();
@@ -28,15 +29,21 @@ export default function Login() {
   return (
     <div style={{
       minHeight: '100vh', display: 'flex', background: 'var(--bg)',
-      backgroundImage: 'radial-gradient(ellipse at 20% 50%, rgba(232,184,75,0.06) 0%, transparent 60%), radial-gradient(ellipse at 80% 20%, rgba(78,158,255,0.06) 0%, transparent 60%)'
+      position: 'relative'
     }}>
+      <div style={{
+        position: 'absolute', inset: 0,
+        backgroundImage: 'url(./albanian_flag.png)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        opacity: 0.2,
+        zIndex: 0
+      }} />
       {/* Left Panel */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: 60 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: 60, position: 'relative', zIndex: 1 }}>
         <div style={{ maxWidth: 420, width: '100%' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 48 }}>
-            <div style={{ background: 'var(--accent)', borderRadius: 14, padding: 12, display: 'flex' }}>
-              <Bus size={24} color="#000" />
-            </div>
+            <img src={logo} alt="Logo" style={{ width: 48, height: 48, borderRadius: 12, objectFit: 'cover' }} />
             <div>
               <div style={{ fontFamily: 'Syne', fontWeight: 800, fontSize: 22, color: 'var(--text)' }}>TIRANA TRANSIT</div>
               <div style={{ fontFamily: 'Syne', fontWeight: 400, fontSize: 11, color: 'var(--muted)', letterSpacing: 3 }}>MANAGEMENT SYSTEM</div>
@@ -99,7 +106,7 @@ export default function Login() {
       <div style={{
         width: 480, background: 'var(--bg2)', borderLeft: '1px solid var(--border)',
         display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: 60,
-        backgroundImage: 'radial-gradient(ellipse at 50% 80%, rgba(232,184,75,0.08) 0%, transparent 70%)'
+        position: 'relative', zIndex: 1
       }}>
         <h3 style={{ fontFamily: 'Syne', fontWeight: 700, fontSize: 20, marginBottom: 32, color: 'var(--accent)' }}>System Features</h3>
         {[

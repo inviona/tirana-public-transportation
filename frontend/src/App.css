@@ -1,32 +1,45 @@
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap');
 
 :root {
-  --bg: #080c18;
-  --bg2: #0e1528;
-  --bg3: #141c34;
-  --border: rgba(255,255,255,0.07);
-  --accent: #e8b84b;
-  --accent2: #4e9eff;
-  --accent3: #6ee7b7;
-  --red: #ef4444;
-  --text: #e8eaf0;
-  --muted: #8892a4;
-  --card: rgba(20, 28, 52, 0.8);
+  --bg: #0a0a0a;
+  --bg2: #141414;
+  --bg3: #1e1e1e;
+  --border: rgba(255,255,255,0.08);
+  --accent: #cf0a2c;
+  --accent2: #cf0a2c;
+  --accent3: #cf0a2c;
+  --red: #cf0a2c;
+  --text: #ffffff;
+  --muted: #a0a0a0;
+  --card: rgba(20, 20, 20, 0.8);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, #root { height: 100%; }
 body {
   background: var(--bg);
+  background-image: url('./albanian_flag.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   color: var(--text);
   font-family: 'DM Sans', sans-serif;
   font-size: 14px;
   line-height: 1.6;
 }
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(10, 10, 10, 0.75);
+  pointer-events: none;
+  z-index: -1;
+}
 h1,h2,h3,h4 { font-family: 'Syne', sans-serif; }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 20px; border: none; border-radius: 8px; font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
-.btn-primary { background: var(--accent); color: #000; }
-.btn-primary:hover { background: #f0c860; transform: translateY(-1px); }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: #e60a2c; transform: translateY(-1px); }
 .btn-secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
 .btn-secondary:hover { background: var(--bg2); }
 .btn-danger { background: var(--red); color: #fff; }
@@ -34,7 +47,7 @@ h1,h2,h3,h4 { font-family: 'Syne', sans-serif; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; backdrop-filter: blur(12px); }
 .badge { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; font-family: 'Syne', sans-serif; text-transform: uppercase; letter-spacing: 0.5px; }
 .badge-green { background: rgba(110,231,183,0.15); color: var(--accent3); border: 1px solid rgba(110,231,183,0.3); }
-.badge-yellow { background: rgba(232,184,75,0.15); color: var(--accent); border: 1px solid rgba(232,184,75,0.3); }
+.badge-yellow { background: rgba(207,10,44,0.15); color: var(--accent); border: 1px solid rgba(207,10,44,0.3); }
 .badge-red { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
 .badge-blue { background: rgba(78,158,255,0.15); color: var(--accent2); border: 1px solid rgba(78,158,255,0.3); }
 input, select, textarea { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; color: var(--text); padding: 10px 14px; font-family: 'DM Sans', sans-serif; font-size: 14px; width: 100%; outline: none; transition: border-color 0.2s; }
