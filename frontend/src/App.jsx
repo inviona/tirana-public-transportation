@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import RoutePlanner from './pages/RoutePlanner';
 import LiveTracking from './pages/LiveTracking';
 import Tickets from './pages/Tickets';
+import Wallet from './pages/Wallet';
 import AdminDashboard from './pages/AdminDashboard';
 import Layout from './components/Layout';
 import { AuthContext } from './lib/auth';
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="plan" element={<RoutePlanner />} />
             <Route path="tracking" element={<LiveTracking />} />
             <Route path="tickets" element={<Tickets />} />
+            <Route path="wallet" element={<Wallet />} />
             <Route path="admin" element={user?.role === 'admin' ? <AdminDashboard /> : <Navigate to="/" />} />
           </Route>
         </Routes>

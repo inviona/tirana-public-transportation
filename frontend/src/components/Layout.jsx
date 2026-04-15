@@ -1,6 +1,6 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
-import { Bus, Map, Navigation, Ticket, LayoutDashboard, LogOut, Wallet } from 'lucide-react';
+import { Bus, Map, Navigation, Ticket, LayoutDashboard, LogOut, Wallet as WalletIcon, CreditCard } from 'lucide-react';
 import logo from '../logo.jpeg';
 
 export default function Layout() {
@@ -13,6 +13,7 @@ export default function Layout() {
     { to: '/', icon: LayoutDashboard, label: 'Dashboard', end: true },
     { to: '/plan', icon: Map, label: 'Plan Route' },
     { to: '/tracking', icon: Navigation, label: 'Live Tracking' },
+    { to: '/wallet', icon: WalletIcon, label: 'Wallet & Payments' },
     { to: '/tickets', icon: Ticket, label: 'My Tickets' },
     ...(user?.role === 'admin' ? [{ to: '/admin', icon: LayoutDashboard, label: 'Admin Panel' }] : []),
   ];
@@ -30,10 +31,10 @@ export default function Layout() {
         {/* Logo */}
         <div className="sidebar-logo" style={{ padding: '28px 24px 20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <img src={logo} alt="Logo" style={{ width: 40, height: 40, borderRadius: 10, objectFit: 'cover', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }} />
+            <img src={logo} alt="Logo" style={{ width: 52, height: 52, borderRadius: 12, objectFit: 'cover', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }} />
             <div>
-              <div style={{ fontFamily: 'Syne', fontWeight: 800, fontSize: 16, color: 'var(--text)', letterSpacing: 1 }}>TIRANA</div>
-              <div style={{ fontFamily: 'Syne', fontWeight: 400, fontSize: 10, color: 'var(--muted)', letterSpacing: 3 }}>TRANSIT</div>
+              <div style={{ fontFamily: 'Syne', fontWeight: 800, fontSize: 18, color: 'var(--text)', letterSpacing: 1 }}>TIRANA</div>
+              <div style={{ fontFamily: 'Syne', fontWeight: 400, fontSize: 11, color: 'var(--muted)', letterSpacing: 3 }}>TRANSIT</div>
             </div>
           </div>
         </div>
@@ -60,7 +61,7 @@ export default function Layout() {
             <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>{user?.email}</div>
             {user?.role === 'passenger' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', background: 'rgba(207,10,44,0.1)', borderRadius: 8, border: '1px solid rgba(207,10,44,0.2)' }}>
-                <Wallet size={14} color="var(--accent)" />
+                <CreditCard size={14} color="var(--accent)" />
                 <span style={{ fontSize: 13, color: 'var(--accent)', fontWeight: 700 }}>{user?.balance?.toLocaleString()} L</span>
               </div>
             )}

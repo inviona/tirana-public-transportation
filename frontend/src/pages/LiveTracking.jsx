@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../lib/auth';
-import { Filter, Locate, Building2 } from 'lucide-react';
-import { MapContainer, TileLayer, Polyline, Marker, Popup, CircleMarker, Tooltip } from 'react-leaflet';
+import { Filter, Locate } from 'lucide-react';
+import { MapContainer, TileLayer, Polyline, Marker, CircleMarker, Tooltip, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
@@ -19,37 +19,58 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow,
 });
 
-/* ─── institution icon colours by type ──────────────────────────────────────── */
-const INST_COLORS = {
-  university: '#4e9eff',
-  school: '#6ee7b7',
-  hospital: '#ef4444',
-  government: '#e8b84b',
-  landmark: '#c084fc',
-  culture: '#f472b6',
-  shopping: '#fb923c',
-  sport: '#34d399',
-  transport: '#38bdf8',
-  hotel: '#fbbf24',
-  embassy: '#a78bfa',
-};
-
-function instColor(type) {
-  return INST_COLORS[type] || '#8892a4';
+/* ─── custom bus icon ─────────────────────────────────────────────────────────── */
+function createBusIcon(colour, isSelected) {
+  const size = isSelected ? 40 : 32;
+  const busColor = '#cf0a2c';
+  const borderColor = '#ffffff';
+  const html = `
+    <div style="
+      width: ${size}px;
+      height: ${size}px;
+      background: ${busColor};
+      border-radius: 50%;
+      border: ${isSelected ? '4px' : '3px'} solid ${borderColor};
+      box-shadow: 
+        0 0 0 2px rgba(0,0,0,0.3),
+        0 0 ${isSelected ? '20px' : '12px'} ${busColor}80,
+        0 4px 12px rgba(0,0,0,0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    ">
+      <div style="
+        width: 0;
+        height: 0;
+        border-left: ${size * 0.22}px solid transparent;
+        border-right: ${size * 0.22}px solid transparent;
+        border-bottom: ${size * 0.3}px solid ${borderColor};
+        margin-top: -2px;
+      "></div>
+    </div>
+  `;
+  return L.divIcon({
+    html,
+    className: 'bus-icon',
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    popupAnchor: [0, -size / 2],
+  });
 }
+
+const pulseStyle = `
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  @keyframes busGlow { 0%,100%{box-shadow: 0 0 20px currentColor, 0 0 40px currentColor;} 50%{box-shadow: 0 0 30px currentColor, 0 0 60px currentColor;} }
+  .bus-icon { background: transparent !important; border: none !important; }
+`;
 
 export default function LiveTracking() {
   const { token } = useAuth();
   const [vehicles, setVehicles] = useState([]);
   const [routes, setRoutes] = useState([]);
   const [mapRoutes, setMapRoutes] = useState([]);
-  const [stops, setStops] = useState([]);
   const [selectedRoute, setSelectedRoute] = useState('all');
   const [selected, setSelected] = useState(null);
-
-  /* ─── NEW: institutions ──────────────────────────────────────────────────── */
-  const [institutions, setInstitutions] = useState([]);
-  const [showInstitutions, setShowInstitutions] = useState(false);
 
   /* ─── NEW: live location snapping ────────────────────────────────────────── */
   const [liveMode, setLiveMode] = useState(false);
@@ -65,17 +86,6 @@ export default function LiveTracking() {
 
   useEffect(() => {
     fetch('http://localhost:3001/api/map/routes').then((r) => r.json()).then(setMapRoutes);
-  }, []);
-
-  useEffect(() => {
-    fetch('http://localhost:3001/api/stops').then((r) => r.json()).then(setStops);
-  }, []);
-
-  useEffect(() => {
-    fetch('http://localhost:3001/api/institutions')
-      .then((r) => r.json())
-      .then(setInstitutions)
-      .catch(() => setInstitutions([]));
   }, []);
 
   useEffect(() => {
@@ -162,11 +172,6 @@ export default function LiveTracking() {
     return mapRoutes.filter((r) => r.id === selectedRoute);
   }, [mapRoutes, selectedRoute]);
 
-  const displayedStops = useMemo(() => {
-    if (!selectedRef) return stops;
-    return stops.filter((s) => s.routes?.some((rt) => rt.ref === selectedRef));
-  }, [stops, selectedRef]);
-
   const displayed = vehicles.filter((v) => selectedRoute === 'all' || v.routeId === selectedRoute);
   const crowdColor = (c) => (c === 'low' ? '#6ee7b7' : c === 'medium' ? '#e8b84b' : c === 'high' ? '#ef4444' : '#8892a4');
   const statusColor = (s) => (s === 'moving' ? '#6ee7b7' : s === 'stopped' ? '#e8b84b' : '#ef4444');
@@ -181,20 +186,6 @@ export default function LiveTracking() {
           <p style={{ color: 'var(--muted)' }}>Real-time GPS positions of all active vehicles.</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          {/* Institutions toggle */}
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={() => setShowInstitutions(!showInstitutions)}
-            style={{
-              borderColor: showInstitutions ? 'rgba(232,184,75,0.4)' : 'var(--border)',
-              background: showInstitutions ? 'rgba(232,184,75,0.08)' : 'var(--bg3)',
-            }}
-          >
-            <Building2 size={14} />
-            {showInstitutions ? 'Hide' : 'Show'} Landmarks
-          </button>
-
           {/* "I'm on a Bus" toggle */}
           <button
             type="button"
@@ -252,8 +243,7 @@ export default function LiveTracking() {
             <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#6ee7b7', animation: 'pulse 2s infinite' }} />
             <span style={{ fontSize: 13, fontWeight: 600 }}>Live Map — Tirana</span>
             <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 'auto' }}>
-              {displayed.length} vehicles tracked
-              {showInstitutions && ` · ${institutions.length} landmarks`}
+              {displayed.length} buses tracked
             </span>
           </div>
           <div style={{ height: 520, width: '100%' }}>
@@ -267,43 +257,24 @@ export default function LiveTracking() {
                 )),
               )}
 
-              {/* Stops */}
-              {displayedStops.map((stop) => {
-                const routeLabels = (stop.routes || []).map((rt) => rt.ref).filter(Boolean);
-                return (
-                  <Marker key={stop.id} position={[stop.lat, stop.lng]}>
-                    <Popup>
-                      {stop.name}
-                      <br />
-                      Routes: {routeLabels.length ? routeLabels.join(', ') : '—'}
-                    </Popup>
-                  </Marker>
-                );
-              })}
-
               {/* Vehicles */}
               {displayed.map((v) => {
                 const colour = v.route?.colour || '#555555';
                 const isSel = selected?.id === v.id;
+                const busIcon = createBusIcon(colour, isSel);
                 return (
-                  <CircleMarker
+                  <Marker
                     key={v.id}
-                    center={[v.lat, v.lng]}
-                    radius={isSel ? 16 : 12}
-                    pathOptions={{
-                      color: isSel ? '#ffffff' : colour,
-                      weight: isSel ? 2 : 1,
-                      fillColor: colour,
-                      fillOpacity: 0.92,
-                    }}
+                    position={[v.lat, v.lng]}
+                    icon={busIcon}
                     eventHandlers={{
                       click: () => setSelected(selected?.id === v.id ? null : v),
                     }}
                   >
-                    <Tooltip direction="top" offset={[0, -6]} opacity={1}>
+                    <Tooltip direction="top" offset={[0, -10]} opacity={1}>
                       <span style={{ fontWeight: 600 }}>{v.route?.ref || '?'}</span> · {v.plate}
                     </Tooltip>
-                  </CircleMarker>
+                  </Marker>
                 );
               })}
 
@@ -341,31 +312,10 @@ export default function LiveTracking() {
                 />
               )}
 
-              {/* ─── Institutions layer ────────────────────────────────────── */}
-              {showInstitutions && institutions.map((inst) => (
-                <CircleMarker
-                  key={`inst-${inst.id}`}
-                  center={[inst.lat, inst.lng]}
-                  radius={5}
-                  pathOptions={{
-                    color: instColor(inst.type),
-                    fillColor: instColor(inst.type),
-                    fillOpacity: 0.7,
-                    weight: 1.5,
-                  }}
-                >
-                  <Tooltip direction="top" offset={[0, -4]} opacity={0.92}>
-                    <span style={{ fontSize: 11 }}>
-                      {inst.name}
-                      <br />
-                      <em style={{ color: '#999' }}>{inst.type}</em>
-                    </span>
-                  </Tooltip>
-                </CircleMarker>
-              ))}
+
             </MapContainer>
           </div>
-          <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }`}</style>
+          <style dangerouslySetInnerHTML={{ __html: pulseStyle }} />
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 560, overflowY: 'auto' }}>
@@ -415,7 +365,7 @@ export default function LiveTracking() {
                 />
               </div>
               {selected?.id === v.id && (
-                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)', fontSize: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)', fontSize: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ color: 'var(--muted)' }}>Status</span>
                     <span style={{ color: statusColor(v.status), fontWeight: 600, textTransform: 'capitalize' }}>{v.status}</span>
@@ -428,12 +378,19 @@ export default function LiveTracking() {
                     <span style={{ color: 'var(--muted)' }}>Crowd Level</span>
                     <span style={{ color: crowdColor(v.crowdLevel), fontWeight: 600, textTransform: 'capitalize' }}>{v.crowdLevel}</span>
                   </div>
+                  {v.prevStop && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                      <span style={{ color: 'var(--muted)' }}>← Prev</span>
+                      <span style={{ color: 'var(--muted)', fontSize: 11, maxWidth: 140, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.prevStop}</span>
+                    </div>
+                  )}
                   {v.nextStop && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--muted)' }}>Next Stop</span>
-                      <span style={{ color: 'var(--accent2)' }}>
-                        {v.nextStop} ({v.eta}min)
-                      </span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                      <span style={{ color: 'var(--accent2)' }}>→ Next</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ color: 'var(--accent2)', fontSize: 11, maxWidth: 120, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.nextStop}</span>
+                        {v.eta && <span style={{ fontSize: 10, color: 'var(--muted)', background: 'var(--bg3)', padding: '2px 6px', borderRadius: 4 }}>{v.eta}min</span>}
+                      </div>
                     </div>
                   )}
                 </div>

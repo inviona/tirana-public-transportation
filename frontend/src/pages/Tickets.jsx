@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../lib/auth';
-import { Ticket, Plus, Wallet, QrCode, CheckCircle, Clock } from 'lucide-react';
+import { Ticket, Plus, Wallet, QrCode, X, CreditCard } from 'lucide-react';
+import { loadStripe } from '@stripe/stripe-js';
+import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
+
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
+
+const TOPUP_AMOUNTS = [200, 500, 1000, 2000, 5000];
 
 const TICKET_TYPES = [
   { id: 'single', label: 'Single Ride', price: 40, desc: 'Valid for 4 hours on any single route', icon: '🎫' },
@@ -9,6 +15,143 @@ const TICKET_TYPES = [
   { id: 'monthly', label: 'Monthly Pass', price: 2500, desc: 'Unlimited rides for 30 days — best value', icon: '🏷️' },
 ];
 
+function PaymentForm({ amount, onClose, onSuccess }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!stripe || !elements) return;
+
+    setLoading(true);
+    setError('');
+
+    const { error: submitError } = await elements.submit();
+    if (submitError) {
+      setError(submitError.message);
+      setLoading(false);
+      return;
+    }
+
+    const { error: confirmError, paymentIntent } = await stripe.confirmPayment({
+      elements,
+      redirect: 'if_required',
+    });
+
+    if (confirmError) {
+      setError(confirmError.message);
+      setLoading(false);
+      return;
+    }
+
+    if (paymentIntent && paymentIntent.status === 'succeeded') {
+      const confirmRes = await fetch('http://localhost:3001/api/payments/confirm', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({ paymentIntentId: paymentIntent.id }),
+      });
+      const confirmData = await confirmRes.json();
+      if (confirmData.success) {
+        onSuccess(confirmData.balance);
+      } else {
+        setError(confirmData.error || 'Payment succeeded but balance update failed');
+      }
+    }
+    setLoading(false);
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <PaymentElement />
+      <div style={{ marginTop: 20, fontSize: 12, color: 'var(--muted)', textAlign: 'center' }}>
+        Supported: <CreditCard size={14} style={{ marginLeft: 4 }} /> Card, Apple Pay, Google Pay, SEPA Direct Debit (IBAN)
+      </div>
+      {error && <p style={{ color: 'var(--red)', fontSize: 14, marginTop: 12 }}>{error}</p>}
+      <button type="submit" className="btn btn-primary" disabled={loading || !stripe} style={{ width: '100%', marginTop: 16 }}>
+        {loading ? 'Processing...' : `Pay ${amount} L`}
+      </button>
+    </form>
+  );
+}
+
+function PaymentModal({ amount, onClose, onSuccess }) {
+  const [clientSecret, setClientSecret] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const initPayment = async () => {
+      try {
+        const res = await fetch('http://localhost:3001/api/payments/create-intent', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${localStorage.getItem('token')}`,
+          },
+          body: JSON.stringify({ amount }),
+        });
+        const data = await res.json();
+        if (data.clientSecret) {
+          setClientSecret(data.clientSecret);
+        } else {
+          setError(data.error || 'Failed to initialize payment');
+        }
+      } catch (err) {
+        setError('Failed to connect to payment server');
+      } finally {
+        setLoading(false);
+      }
+    };
+    initPayment();
+  }, [amount]);
+
+  const appearance = {
+    theme: 'night',
+    variables: {
+      colorPrimary: '#e8b84b',
+      colorBackground: '#1a1f2e',
+      colorText: '#e0e0e0',
+      colorDanger: '#ef4444',
+      fontFamily: 'system-ui, sans-serif',
+      borderRadius: '8px',
+    },
+  };
+
+  return (
+    <div style={styles.modalOverlay}>
+      <div style={styles.modal}>
+        <div style={styles.modalHeader}>
+          <h3 style={{ margin: 0 }}>Top Up Wallet — {amount} L</h3>
+          <button onClick={onClose} style={styles.closeBtn}>
+            <X size={20} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 40 }}>
+            <div style={{ color: 'var(--muted)', marginBottom: 12 }}>Initializing payment...</div>
+            <div className="spinner" style={{ margin: '0 auto' }} />
+          </div>
+        ) : error ? (
+          <div style={{ textAlign: 'center', padding: 20 }}>
+            <p style={{ color: 'var(--red)', marginBottom: 16 }}>{error}</p>
+            <button className="btn btn-primary" onClick={onClose}>Close</button>
+          </div>
+        ) : (
+          <Elements stripe={stripePromise} options={{ clientSecret, appearance }}>
+            <PaymentForm amount={amount} onClose={onClose} onSuccess={onSuccess} />
+          </Elements>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Tickets() {
   const { token, user } = useAuth();
   const [tickets, setTickets] = useState([]);
@@ -16,6 +159,7 @@ export default function Tickets() {
   const [tab, setTab] = useState('my');
   const [purchasing, setPurchasing] = useState(null);
   const [topupAmount, setTopupAmount] = useState(500);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState('');
 
@@ -26,18 +170,26 @@ export default function Tickets() {
       .then(r => r.json()).then(setTickets);
   };
 
-  useEffect(() => { fetchTickets(); }, []);
+  const refreshBalance = async () => {
+    const res = await fetch('http://localhost:3001/api/auth/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const userData = await res.json();
+    if (userData.balance !== undefined) {
+      setBalance(userData.balance);
+    }
+  };
+
+  useEffect(() => { fetchTickets(); refreshBalance(); }, []);
 
   const handleTopup = async () => {
-    setLoading(true);
-    const res = await fetch('http://localhost:3001/api/wallet/topup', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ amount: topupAmount })
-    });
-    const data = await res.json();
-    setBalance(data.balance);
+    setShowPaymentModal(true);
+  };
+
+  const handlePaymentSuccess = (newBalance) => {
+    setBalance(newBalance);
+    setShowPaymentModal(false);
     showToast(`✅ Topped up ${topupAmount} L successfully!`);
-    setLoading(false);
   };
 
   const handleBuy = async (type) => {
@@ -62,7 +214,14 @@ export default function Tickets() {
 
   return (
     <div style={{ padding: 32, maxWidth: 900, margin: '0 auto' }}>
-      {/* Toast */}
+      {showPaymentModal && (
+        <PaymentModal
+          amount={topupAmount}
+          onClose={() => setShowPaymentModal(false)}
+          onSuccess={handlePaymentSuccess}
+        />
+      )}
+
       {toast && (
         <div style={{ position: 'fixed', top: 24, right: 24, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 20px', zIndex: 9999, fontWeight: 600, fontSize: 14, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
           {toast}
@@ -74,7 +233,6 @@ export default function Tickets() {
         <p style={{ color: 'var(--muted)' }}>Manage your transit tickets and account balance.</p>
       </div>
 
-      {/* Wallet Card */}
       <div style={{ background: 'linear-gradient(135deg, #1a2a4a 0%, #0e1528 100%)', border: '1px solid rgba(232,184,75,0.2)', borderRadius: 20, padding: '28px 32px', marginBottom: 24, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 8, fontWeight: 500 }}>WALLET BALANCE</div>
@@ -84,17 +242,16 @@ export default function Tickets() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-end' }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <select value={topupAmount} onChange={e => setTopupAmount(Number(e.target.value))} style={{ width: 120 }}>
-              {[200, 500, 1000, 2000, 5000].map(a => <option key={a} value={a}>{a} L</option>)}
+              {TOPUP_AMOUNTS.map(a => <option key={a} value={a}>{a} L</option>)}
             </select>
             <button className="btn btn-primary btn-sm" onClick={handleTopup} disabled={loading}>
               <Wallet size={13} /> Top Up
             </button>
           </div>
-          <p style={{ fontSize: 11, color: 'var(--muted)' }}>Add funds to your transit wallet</p>
+          <p style={{ fontSize: 11, color: 'var(--muted)' }}>Add funds via Card, Apple Pay, or SEPA</p>
         </div>
       </div>
 
-      {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, background: 'var(--bg3)', padding: 4, borderRadius: 12, marginBottom: 24, width: 'fit-content' }}>
         {[{ id: 'my', label: 'My Tickets' }, { id: 'buy', label: 'Buy Tickets' }].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} className="btn" style={{
@@ -118,7 +275,6 @@ export default function Tickets() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
               {tickets.map(t => (
                 <div key={t.id} className="card" style={{ position: 'relative', overflow: 'hidden' }}>
-                  {/* Status stripe */}
                   <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: t.status === 'active' ? 'var(--accent3)' : t.status === 'used' ? 'var(--muted)' : 'var(--red)' }} />
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
                     <div>
@@ -188,3 +344,23 @@ export default function Tickets() {
     </div>
   );
 }
+
+const styles = {
+  modalOverlay: {
+    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+    background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center',
+    justifyContent: 'center', zIndex: 10000,
+  },
+  modal: {
+    background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 16,
+    padding: 28, width: '100%', maxWidth: 480,
+  },
+  modalHeader: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: 24,
+  },
+  closeBtn: {
+    background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer',
+    padding: 4, display: 'flex', alignItems: 'center',
+  },
+};

@@ -1,7 +1,7 @@
 # 🚌 Tirana Public Transportation Management System
 **Full-Stack Web Application — Software Project Management Course**
 
-A modern, full-stack transit management system for the city of Tirana, Albania. Features real GTFS transit data, live vehicle tracking, digital ticketing, and an admin control panel.
+A modern, full-stack transit management system for the city of Tirana, Albania. Features real GTFS transit data, live vehicle tracking, digital ticketing, and an admin control panel. Styled with Albanian national branding.
 
 ---
 
@@ -23,35 +23,39 @@ A modern, full-stack transit management system for the city of Tirana, Albania. 
 
 ```
 tirana-public-transportation/
+├── albanian_flag.png          # Albanian flag background image
+├── logo.jpeg                  # App logo/branding
 ├── backend/
-│   ├── server.js              # Express API server (786 lines)
+│   ├── server.js              # Express API server
 │   ├── db.js                  # MongoDB connection + admin seeding
 │   ├── gtfs_transit.js        # GTFS data loader & journey planner
 │   ├── download_gtfs.js       # GTFS data downloader
+│   ├── gtfs_updater.js        # GTFS auto-updater script
 │   ├── models/
 │   │   ├── User.js            # User model (passenger/admin, wallet balance)
 │   │   ├── Ticket.js          # Ticket model (single/daily/weekly/monthly)
 │   │   ├── Alert.js           # Service alert model
 │   │   └── Report.js          # User report model
-│   ├── tirana_gtfs.zip       # Official GTFS zip archive
 │   ├── gtfs_cache.json        # Parsed/stored GTFS data
 │   └── package.json
 ├── frontend/
 │   ├── src/
+│   │   ├── albanian_flag.png  # Albanian flag for branding
+│   │   ├── logo.jpeg          # App logo
 │   │   ├── App.jsx            # Router + Auth provider
 │   │   ├── main.jsx           # React entry
 │   │   ├── index.css          # Design system (dark theme, CSS vars)
-│   │   ├── App.css
+│   │   ├── App.css            # Global styles + branding
 │   │   ├── pages/
-│   │   │   ├── Login.jsx          # Login + register
+│   │   │   ├── Login.jsx          # Login + register with Albanian flag
 │   │   │   ├── Dashboard.jsx      # Home: stats, routes, alerts, live vehicles
 │   │   │   ├── RoutePlanner.jsx   # Wrapper → JourneyPlanner
 │   │   │   ├── LiveTracking.jsx   # Leaflet map + vehicle tracking
 │   │   │   ├── Tickets.jsx        # Wallet + ticket purchase
 │   │   │   └── AdminDashboard.jsx # KPIs, fleet, routes, users, alerts
 │   │   ├── components/
-│   │   │   ├── Layout.jsx         # Sidebar navigation + user info
-│   │   │   └── JourneyPlanner.jsx # Full route planner (1100 lines)
+│   │   │   ├── Layout.jsx         # Sidebar + Albanian flag branding
+│   │   │   └── JourneyPlanner.jsx # Full route planner
 │   │   └── lib/
 │   │       ├── auth.js            # Auth context + API helper
 │   │       └── mapUtils.js        # Geo utilities (haversine, snapping)
@@ -134,6 +138,7 @@ npm run dev
 - **QR code display** for active tickets
 - **Ticket history** with expiration tracking
 - **Insufficient balance** warnings with quick top-up prompt
+- **Stripe payments**: Apple Pay, Card, SEPA Direct Debit (IBAN) via Payment Element
 
 ### 📊 Admin Dashboard (`/admin`)
 
@@ -160,6 +165,11 @@ npm run dev
 - bcrypt password hashing
 - Role-based routing (passenger vs admin)
 - Protected API endpoints (middleware)
+
+### 🇦🇱 Albanian Branding
+- Albanian flag background on login and layout pages
+- Custom app logo
+- Consistent national color theming throughout the UI
 
 ---
 
@@ -199,7 +209,14 @@ GET    /api/tracking           Public: live vehicle positions
 ```
 GET    /api/tickets            User's tickets (auth)
 POST   /api/tickets/purchase   Buy ticket {type, routeId?} (auth)
-POST   /api/wallet/topup       Add funds {amount} (auth)
+POST   /api/wallet/topup       Add funds directly (auth, legacy)
+```
+
+### Stripe Payments
+```
+GET    /api/payments/config          Get publishable key + amounts
+POST   /api/payments/create-intent   Create Stripe PaymentIntent (auth)
+POST   /api/payments/confirm         Confirm payment + credit wallet (auth)
 ```
 
 ### Alerts & Reports
@@ -238,6 +255,12 @@ cd backend
 node download_gtfs.js
 ```
 
+For automatic GTFS updates on a schedule, use the updater:
+```bash
+cd backend
+node gtfs_updater.js
+```
+
 This downloads the GTFS zip, parses routes/stops/trips/shapes/calendar, and caches to `gtfs_cache.json`. The `GTFSData` class in `gtfs_transit.js` provides:
 - Real schedules by route
 - Live arrivals at any stop
@@ -263,6 +286,42 @@ The tracking endpoint currently simulates vehicle movement in-memory. To connect
 | `MONGODB_URI` | **Yes** | MongoDB Atlas connection string |
 | `JWT_SECRET` | No | JWT signing key (default: `tirana-transit-secret-2024`) |
 | `ORS_API_KEY` | No | OpenRouteService API key for walking directions |
+| `STRIPE_SECRET_KEY` | **Yes** | Stripe secret key for payment processing |
+| `STRIPE_PUBLISHABLE_KEY` | **Yes** | Stripe publishable key (frontend) |
+
+---
+
+## Stripe Payments
+
+The app uses Stripe Payment Intents API for wallet top-ups with support for **Apple Pay**, **Card**, and **SEPA Direct Debit (IBAN)**.
+
+### Setup
+
+1. Create a Stripe account at [stripe.com](https://stripe.com)
+2. Enable payment methods in Dashboard → Settings → Payment methods:
+   - Cards (enabled by default)
+   - Apple Pay / Google Pay (enable "Wallets" toggle)
+   - SEPA Direct Debit
+3. Add environment variables:
+
+**Backend** (`backend/.env`):
+```
+STRIPE_SECRET_KEY=sk_test_...
+```
+
+**Frontend** (`frontend/.env`):
+```
+VITE_STRIPE_PUBLISHABLE_KEY=pk_test_...
+```
+
+### Payment Flow
+
+1. User selects top-up amount (200–5000 L)
+2. Frontend calls `/api/payments/create-intent` → returns `clientSecret`
+3. Stripe Payment Element renders with available methods (Apple Pay, Card, SEPA)
+4. User completes payment via their preferred method
+5. Frontend confirms payment → calls `/api/payments/confirm`
+6. Backend credits the user's wallet balance
 
 ---
 

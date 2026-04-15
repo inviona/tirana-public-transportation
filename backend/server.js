@@ -22,6 +22,10 @@ const JWT_SECRET = process.env.JWT_SECRET || 'tirana-transit-secret-2024';
 const ORS_API_KEY = process.env.ORS_API_KEY || '';
 const GTFS_CACHE = path.join(__dirname, 'gtfs_cache.json');
 
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+
+const TOPUP_AMOUNTS = [200, 500, 1000, 2000, 5000];
+
 // ─── LOAD INSTITUTIONS DATA ──────────────────────────────────────────────────
 const institutionsPath = path.join(__dirname, 'institutions.json');
 const institutions = JSON.parse(fs.readFileSync(institutionsPath, 'utf-8'));
@@ -116,22 +120,64 @@ function routeByRef(ref) {
 // ─── VEHICLES IN MEMORY ──────────────────────────────────────────────────────
 let vehicles = [];
 
+function haversineM(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = d => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+function findNearestStopsForVehicle(lat, lng, routeId) {
+  const routeStops = simplifiedStops.filter(s => 
+    s.routes && s.routes.some(r => r.ref === simplifiedRoutes.find(rout => rout.id === routeId)?.ref)
+  );
+  
+  if (routeStops.length === 0) return { nextStop: null, prevStop: null, eta: null };
+  
+  const sortedStops = routeStops.sort((a, b) => 
+    haversineM(lat, lng, a.lat, a.lng) - haversineM(lat, lng, b.lat, b.lng)
+  );
+  
+  const nearest = sortedStops[0];
+  const distance = haversineM(lat, lng, nearest.lat, nearest.lng);
+  const etaMinutes = Math.max(1, Math.round(distance / 500));
+  
+  const nearestIndex = routeStops.findIndex(s => s.id === nearest.id);
+  const prevStop = nearestIndex > 0 ? routeStops[nearestIndex - 1] : null;
+  
+  return {
+    nextStop: nearest,
+    prevStop,
+    eta: etaMinutes
+  };
+}
+
 function initializeVehicles() {
   const activeRoutes = simplifiedRoutes.filter(r => r.active).slice(0, 6);
   const statuses = ['moving', 'moving', 'stopped', 'moving', 'maintenance', 'moving'];
   const crowds = ['medium', 'high', 'low', 'medium', 'empty', 'low'];
-  vehicles = activeRoutes.map((route, i) => ({
-    id: `v${i + 1}`,
-    plate: `TR-00${i + 1}-${String.fromCharCode(65 + i * 2)}${String.fromCharCode(66 + i * 2)}`,
-    routeId: route.id,
-    lat: 41.3275 + (Math.random() - 0.5) * 0.05,
-    lng: 19.8187 + (Math.random() - 0.5) * 0.05,
-    speed: statuses[i] === 'moving' ? Math.floor(25 + Math.random() * 30) : 0,
-    status: statuses[i],
-    crowdLevel: crowds[i],
-    nextStop: null,
-    eta: statuses[i] === 'moving' ? Math.floor(2 + Math.random() * 8) : null,
-  }));
+  vehicles = activeRoutes.map((route, i) => {
+    const lat = 41.3275 + (Math.random() - 0.5) * 0.05;
+    const lng = 19.8187 + (Math.random() - 0.5) * 0.05;
+    const stopInfo = findNearestStopsForVehicle(lat, lng, route.id);
+    return {
+      id: `v${i + 1}`,
+      plate: `TR-00${i + 1}-${String.fromCharCode(65 + i * 2)}${String.fromCharCode(66 + i * 2)}`,
+      routeId: route.id,
+      lat,
+      lng,
+      speed: statuses[i] === 'moving' ? Math.floor(25 + Math.random() * 30) : 0,
+      status: statuses[i],
+      crowdLevel: crowds[i],
+      nextStop: stopInfo.nextStop?.name || null,
+      nextStopLat: stopInfo.nextStop?.lat || null,
+      nextStopLng: stopInfo.nextStop?.lng || null,
+      prevStop: stopInfo.prevStop?.name || null,
+      eta: stopInfo.eta || null,
+    };
+  });
 }
 
 setInterval(() => {
@@ -139,8 +185,13 @@ setInterval(() => {
     if (v.status === 'moving') {
       v.lat += (Math.random() - 0.5) * 0.001;
       v.lng += (Math.random() - 0.5) * 0.001;
+      const stopInfo = findNearestStopsForVehicle(v.lat, v.lng, v.routeId);
+      v.nextStop = stopInfo.nextStop?.name || null;
+      v.nextStopLat = stopInfo.nextStop?.lat || null;
+      v.nextStopLng = stopInfo.nextStop?.lng || null;
+      v.prevStop = stopInfo.prevStop?.name || null;
+      v.eta = stopInfo.eta || null;
       v.speed = Math.floor(20 + Math.random() * 50);
-      v.eta = Math.max(0, (v.eta || 5) - 1 + Math.floor(Math.random() * 2));
     }
   });
 }, 5000);
@@ -565,6 +616,9 @@ app.post('/api/tickets/purchase', auth, async (req, res) => {
 app.post('/api/wallet/topup', auth, async (req, res) => {
   try {
     const { amount } = req.body;
+    if (!TOPUP_AMOUNTS.includes(amount)) {
+      return res.status(400).json({ error: 'Invalid topup amount' });
+    }
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
@@ -574,6 +628,74 @@ app.post('/api/wallet/topup', auth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
+});
+
+app.post('/api/payments/create-intent', auth, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    if (!TOPUP_AMOUNTS.includes(amount)) {
+      return res.status(400).json({ error: 'Invalid topup amount. Choose: ' + TOPUP_AMOUNTS.join(', ') });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amount * 100,
+      currency: 'eur',
+      automatic_payment_methods: {
+        enabled: true,
+      },
+      metadata: {
+        userId: req.user.id.toString(),
+        userEmail: user.email,
+        topupAmount: amount.toString(),
+      },
+    });
+
+    res.json({
+      clientSecret: paymentIntent.client_secret,
+      amount,
+    });
+  } catch (err) {
+    console.error('Stripe create-intent error:', err.message);
+    res.status(500).json({ error: 'Payment initialization failed: ' + err.message });
+  }
+});
+
+app.post('/api/payments/confirm', auth, async (req, res) => {
+  try {
+    const { paymentIntentId } = req.body;
+
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+    if (paymentIntent.status !== 'succeeded') {
+      return res.status(400).json({ error: 'Payment not completed', status: paymentIntent.status });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const topupAmount = parseInt(paymentIntent.metadata.topupAmount) || 0;
+    user.balance += topupAmount;
+    await user.save();
+
+    res.json({
+      success: true,
+      balance: user.balance,
+      topupAmount,
+    });
+  } catch (err) {
+    console.error('Stripe confirm error:', err.message);
+    res.status(500).json({ error: 'Payment confirmation failed: ' + err.message });
+  }
+});
+
+app.get('/api/payments/config', (req, res) => {
+  res.json({
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+    topupAmounts: TOPUP_AMOUNTS,
+  });
 });
 
 // ─── ALERTS (MongoDB) ────────────────────────────────────────────────────────
