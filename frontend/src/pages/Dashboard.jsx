@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../lib/auth';
-import { Bus, AlertTriangle, CheckCircle, Clock, TrendingUp, Users, Route } from 'lucide-react';
+import { Bus, AlertTriangle, CheckCircle, Clock, TrendingUp, Route, Navigation } from 'lucide-react';
 
 export default function Dashboard() {
   const { token, user } = useAuth();
@@ -23,52 +23,54 @@ export default function Dashboard() {
   const highAlerts = alerts.filter(a => a.severity === 'high').length;
 
   const stats = [
-    { label: 'Active Routes', value: activeRoutes, icon: Route, color: 'var(--accent2)' },
-    { label: 'Vehicles Moving', value: movingVehicles, icon: Bus, color: 'var(--accent3)' },
-    { label: 'Live Alerts', value: alerts.length, icon: AlertTriangle, color: alerts.length > 0 ? 'var(--red)' : 'var(--accent3)' },
-    { label: 'On-Time Rate', value: '87%', icon: TrendingUp, color: 'var(--accent)' },
+    { label: 'Active Routes', value: activeRoutes, icon: Route, color: 'var(--accent)' },
+    { label: 'Vehicles Moving', value: movingVehicles, icon: Bus, color: '#6ee7b7' },
+    { label: 'Service Alerts', value: alerts.length, icon: AlertTriangle, color: alerts.length > 0 ? '#f87171' : '#6ee7b7' },
+    { label: 'On-Time Rate', value: '87%', icon: TrendingUp, color: '#fbbf24' },
   ];
 
   return (
-    <div style={{ padding: 32 }}>
+    <div style={{ padding: '40px 48px', maxWidth: 1600, margin: '0 auto' }}>
       {/* Header */}
-      <div style={{ marginBottom: 32 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 6 }}>
-          Good morning, {user?.name?.split(' ')[0]} 👋
+      <div style={{ marginBottom: 40 }}>
+        <h1 style={{ fontSize: 36, fontWeight: 800, marginBottom: 8, fontFamily: 'Syne' }}>
+          Good morning, <span className="text-gradient">{user?.name?.split(' ')[0]}</span> 👋
         </h1>
-        <p style={{ color: 'var(--muted)' }}>Here's the current state of Tirana's transit network.</p>
+        <p style={{ color: 'var(--muted)', fontSize: 15 }}>Here's the current state of Tirana's transit network.</p>
       </div>
 
-      {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 32 }}>
+      {/* Stats Grid */}
+      <div className="dashboard-stats" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20, marginBottom: 36 }}>
         {stats.map(s => (
-          <div key={s.label} className="card" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <div style={{ background: `${s.color}18`, borderRadius: 12, padding: 12, flexShrink: 0 }}>
-              <s.icon size={20} color={s.color} />
+          <div key={s.label} className="card" style={{ display: 'flex', alignItems: 'center', gap: 18, padding: 22 }}>
+            <div className="stat-icon" style={{ borderRadius: 14, padding: 14, flexShrink: 0 }}>
+              <s.icon size={22} color={s.color} />
             </div>
             <div>
-              <div style={{ fontSize: 26, fontFamily: 'Syne', fontWeight: 800, color: s.color }}>{s.value}</div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 500 }}>{s.label}</div>
+              <div style={{ fontSize: 32, fontFamily: 'Syne', fontWeight: 800, color: s.color, lineHeight: 1 }}>{s.value}</div>
+              <div style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 500, marginTop: 4 }}>{s.label}</div>
             </div>
           </div>
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
-        {/* Routes */}
-        <div className="card">
-          <h3 style={{ marginBottom: 20, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Bus size={16} color="var(--accent)" /> Active Routes
+      {/* Main Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28 }}>
+        {/* Routes Card */}
+        <div className="card dashboard-routes">
+          <h3 style={{ marginBottom: 24, fontWeight: 700, fontSize: 18, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Bus size={20} color="var(--accent)" />
+            Active Routes
           </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {routes.slice(0, 5).map(r => (
-              <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--bg3)', borderRadius: 10 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 8, background: r.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Syne', fontWeight: 800, fontSize: 13, color: '#fff', flexShrink: 0 }}>
+              <div key={r.id} className="route-item" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 14 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 10, background: r.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Syne', fontWeight: 800, fontSize: 15, color: '#fff', flexShrink: 0, boxShadow: `0 4px 12px ${r.color}40` }}>
                   {r.number}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>Every {r.frequency} min · {r.duration} min ride</div>
+                  <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>{r.name}</div>
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>Every {r.frequency} min · {r.duration} min ride</div>
                 </div>
                 <span className={`badge ${r.active ? 'badge-green' : 'badge-red'}`}>{r.active ? 'Active' : 'Suspended'}</span>
               </div>
@@ -76,53 +78,58 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Alerts */}
-        <div className="card">
-          <h3 style={{ marginBottom: 20, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <AlertTriangle size={16} color="var(--red)" /> Service Alerts
+        {/* Alerts Card */}
+        <div className="card dashboard-alerts">
+          <h3 style={{ marginBottom: 24, fontWeight: 700, fontSize: 18, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <AlertTriangle size={20} color="#f87171" />
+            Service Alerts
           </h3>
           {alerts.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>
-              <CheckCircle size={32} color="var(--accent3)" style={{ marginBottom: 12 }} />
-              <div>All services running normally</div>
+            <div style={{ textAlign: 'center', padding: 48 }}>
+              <CheckCircle size={48} color="#6ee7b7" style={{ marginBottom: 16 }} />
+              <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text)' }}>All services running normally</div>
+              <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>No disruptions detected in the network</div>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {alerts.map(a => (
-                <div key={a.id} style={{
-                  padding: '12px 14px', borderRadius: 10, borderLeft: '3px solid',
-                  borderLeftColor: a.severity === 'high' ? 'var(--red)' : a.severity === 'medium' ? 'var(--accent)' : 'var(--accent3)',
-                  background: a.severity === 'high' ? 'rgba(239,68,68,0.06)' : a.severity === 'medium' ? 'rgba(232,184,75,0.06)' : 'rgba(110,231,183,0.06)',
+                <div key={a.id} className="alert-item" style={{
+                  padding: '14px 16px', borderRadius: 14, borderLeft: '4px solid',
+                  borderLeftColor: a.severity === 'high' ? '#f87171' : a.severity === 'medium' ? 'var(--accent)' : '#6ee7b7',
+                  background: a.severity === 'high' ? 'rgba(248,113,113,0.08)' : a.severity === 'medium' ? 'rgba(207,10,44,0.08)' : 'rgba(110,231,183,0.08)',
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                     <span className={`badge ${a.severity === 'high' ? 'badge-red' : a.severity === 'medium' ? 'badge-yellow' : 'badge-green'}`}>{a.type}</span>
                     <span style={{ fontSize: 11, color: 'var(--muted)' }}>
                       {Math.floor((Date.now() - new Date(a.createdAt)) / 60000)}m ago
                     </span>
                   </div>
-                  <p style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.5 }}>{a.message}</p>
+                  <p style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}>{a.message}</p>
                 </div>
               ))}
             </div>
           )}
         </div>
 
-        {/* Live Vehicles */}
-        <div className="card" style={{ gridColumn: '1 / -1' }}>
-          <h3 style={{ marginBottom: 20, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Clock size={16} color="var(--accent2)" /> Live Vehicle Status
-            <span style={{ fontSize: 11, color: 'var(--accent3)', background: 'rgba(110,231,183,0.1)', padding: '2px 8px', borderRadius: 20, marginLeft: 8 }}>● LIVE</span>
-          </h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+        {/* Live Vehicles Card - Full Width */}
+        <div className="card dashboard-vehicles" style={{ gridColumn: '1 / -1' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+            <h3 style={{ fontWeight: 700, fontSize: 18, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Navigation size={20} color="var(--accent)" />
+              Live Vehicle Status
+            </h3>
+            <span className="live-indicator">● LIVE</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
             {tracking.map(v => (
-              <div key={v.id} style={{ padding: '12px 14px', background: 'var(--bg3)', borderRadius: 10, display: 'flex', gap: 12, alignItems: 'center' }}>
-                <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: v.status === 'moving' ? 'var(--accent3)' : v.status === 'stopped' ? 'var(--accent)' : 'var(--red)', boxShadow: v.status === 'moving' ? '0 0 8px var(--accent3)' : 'none' }} />
+              <div key={v.id} className="vehicle-item" style={{ padding: '14px 16px', borderRadius: 14, display: 'flex', gap: 14, alignItems: 'center' }}>
+                <div style={{ width: 12, height: 12, borderRadius: '50%', flexShrink: 0, background: v.status === 'moving' ? '#6ee7b7' : v.status === 'stopped' ? '#fbbf24' : '#f87171', boxShadow: v.status === 'moving' ? '0 0 12px #6ee7b7' : 'none' }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>{v.plate}</div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>{v.plate}</div>
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>
                     Route {v.route?.number} · {v.status === 'moving' ? `${v.speed} km/h` : v.status}
                   </div>
-                  {v.nextStop && <div style={{ fontSize: 11, color: 'var(--accent2)' }}>→ {v.nextStop} in {v.eta}min</div>}
+                  {v.nextStop && <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 2 }}>→ {v.nextStop} in {v.eta}min</div>}
                 </div>
                 <span className={`badge ${v.crowdLevel === 'low' ? 'badge-green' : v.crowdLevel === 'medium' ? 'badge-yellow' : v.crowdLevel === 'high' ? 'badge-red' : 'badge-blue'}`}>
                   {v.crowdLevel}
