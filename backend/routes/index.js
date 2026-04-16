@@ -1,0 +1,18 @@
+module.exports = {
+  auth: require('./auth'),
+  routes: require('./routes'),
+  transit: require('./transit'),
+  vehicles: require('./vehicles'),
+  tickets: require('./tickets'),
+  wallet: require('./wallet'),
+  payments: require('./payments'),
+  alerts: require('./alerts'),
+  reports: require('./reports'),
+  admin: require('./admin'),
+  geocode: require('./geocode'),
+  nearestStop: require('./nearestStop'),
+  walkingRoute: require('./walkingRoute'),
+  institutions: require('./institutions'),
+  chat: require('./chat'),
+  journey: require('./journey'),
+};

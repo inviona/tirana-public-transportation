@@ -1,0 +1,30 @@
+◇ injected env (8) from backend\.env // tip: ⌘ suppress logs { quiet: true }
+✓ Connected to MongoDB Atlas
+✓ Admin account already exists: admin@transit.al
+[Updater] ============================================
+[Updater] Starting GTFS update (force=false) at 2026-04-16T19:27:15.012Z
+[Updater] Using cached GTFS zip (1d old, < 7d). Skip download.
+[Updater] Extracting zip...
+[Updater] routes=27 stops=491 trips=16642 stopTimes=327066 shapes=13001
+[Updater] Cache written: 491 stops, 27 routes, 327066 stopTimes
+[Updater] stopTimesByStop entries: 491
+[Updater] Routes with geometry: 27
+[Updater] Sample stop_id="1" has 1544 stopTimes entries
+[Updater] Done. Next auto-refresh in ~7 days.
+[Updater] ============================================
+[GTFS] loadFromCache: 27 routes, 491 stops, 327066 stopTimes
+[GTFS] loadFromCache: stopTimesByStop entries=491
+[GTFS] buildIndexes: routesMap=27 stopsMap=491 stopTimesByStop=491 routeStops=27 stopRoutes=491
+[GTFS] stopsMap sample keys: 1, 2, 3
+[GTFS] stopTimesByStop sample keys: 1, 2, 3
+[GTFS] updateActiveServices: today=20260416 (thursday) calendar entries=34
+[GTFS] After calendar filter: 4/34 services matched today
+[GTFS] After calendarDates: activeServices=6
+[GTFS] Final activeServices count: 6
+[GTFSService] simplifiedStops: 491 stops
+[GTFSService] gtfs.stopsMap: 491 entries
+[GTFSService] gtfs.activeServices: 6
+
+Tirana Transit API running on http://localhost:3001
+  Stops:  491
+  Routes: 27

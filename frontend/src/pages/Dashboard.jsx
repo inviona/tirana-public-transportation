@@ -9,11 +9,11 @@ export default function Dashboard() {
   const [tracking, setTracking] = useState([]);
 
   useEffect(() => {
-    fetch('http://localhost:3001/api/routes').then(r => r.json()).then(setRoutes);
+    fetch('http://localhost:3001/api/transit/routes').then(r => r.json()).then(setRoutes);
     fetch('http://localhost:3001/api/alerts').then(r => r.json()).then(setAlerts);
-    fetch('http://localhost:3001/api/tracking').then(r => r.json()).then(setTracking);
+    fetch('http://localhost:3001/api/vehicles/tracking').then(r => r.json()).then(setTracking);
     const interval = setInterval(() => {
-      fetch('http://localhost:3001/api/tracking').then(r => r.json()).then(setTracking);
+      fetch('http://localhost:3001/api/vehicles/tracking').then(r => r.json()).then(setTracking);
     }, 5000);
     return () => clearInterval(interval);
   }, []);

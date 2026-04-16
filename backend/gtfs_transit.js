@@ -410,6 +410,9 @@ class GTFSData {
     const fromStop = this.getStop(fromStopId);
     const toStop = this.getStop(toStopId);
 
+    const now = new Date();
+    const currentSeconds = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+
     if (!fromStop || !toStop) {
       console.warn(`[GTFS] planJourney: fromStop=${!!fromStop} toStop=${!!toStop}`);
       if (!fromStop) console.warn(`[GTFS] fromStop NOT FOUND for "${fromStopId}". stopsMap keys: ${[...this.stopsMap.keys()].slice(0, 5).join(', ')}`);
@@ -464,7 +467,7 @@ class GTFSData {
             const departureSecs = timeToSeconds(ft.departure_time);
             const arrivalSecs = timeToSeconds(tt.arrival_time);
 
-            if (arrivalSecs > departureSecs) {
+            if (arrivalSecs > departureSecs && departureSecs >= currentSeconds - 300) {
               const trip = this.tripsMap.get(ft.trip_id);
               const stops = this.getTripStops(ft.trip_id);
               const fromIdx = stops.findIndex(s => s.stop?.stop_id === normFromId);
@@ -559,7 +562,7 @@ class GTFSData {
             const ttDepSecs = timeToSeconds(transferTo.departure_time);
             const ttArrSecs = timeToSeconds(tt.arrival_time);
 
-            if (ftDepSecs < ftArrSecs && ttDepSecs >= ftArrSecs) {
+            if (ftDepSecs >= currentSeconds - 300 && ftDepSecs < ftArrSecs && ttDepSecs >= ftArrSecs) {
               const route1 = this.getRoute(route1Id);
               const route2 = this.getRoute(route2Id);
 

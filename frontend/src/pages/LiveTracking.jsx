@@ -81,16 +81,16 @@ export default function LiveTracking() {
   const watchIdRef = useRef(null);
 
   useEffect(() => {
-    fetch('http://localhost:3001/api/routes').then((r) => r.json()).then(setRoutes);
+    fetch('http://localhost:3001/api/transit/routes').then((r) => r.json()).then(setRoutes);
   }, []);
 
   useEffect(() => {
-    fetch('http://localhost:3001/api/map/routes').then((r) => r.json()).then(setMapRoutes);
+    fetch('http://localhost:3001/api/transit/map/routes').then((r) => r.json()).then(setMapRoutes);
   }, []);
 
   useEffect(() => {
     const fetchVehicles = () => {
-      fetch('http://localhost:3001/api/tracking')
+      fetch('http://localhost:3001/api/vehicles/tracking')
         .then((r) => r.json())
         .then(setVehicles);
     };

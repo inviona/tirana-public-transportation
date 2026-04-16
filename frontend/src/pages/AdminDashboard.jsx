@@ -22,7 +22,7 @@ export default function AdminDashboard() {
       fetch('http://localhost:3001/api/admin/analytics', { headers: h }).then(r => r.json()),
       fetch('http://localhost:3001/api/admin/users', { headers: h }).then(r => r.json()),
       fetch('http://localhost:3001/api/admin/vehicles', { headers: h }).then(r => r.json()),
-      fetch('http://localhost:3001/api/routes', { headers: h }).then(r => r.json()),
+      fetch('http://localhost:3001/api/transit/routes', { headers: h }).then(r => r.json()),
     ]).then(([a, u, v, r]) => {
       setAnalytics(a); setUsers(u); setVehicles(v); setRoutes(r);
       setLoading(false);
