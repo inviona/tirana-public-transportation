@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: 'C:\\Users\\user\\tirana-public-transportation\\backend\\.env' });
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
@@ -931,6 +931,84 @@ app.get('/api/institutions', (req, res) => {
   const { type } = req.query;
   if (type) return res.json(institutions.filter(i => i.type === type));
   res.json(institutions);
+});
+
+// ─── AI CHATBOT (Mistral) ──────────────────────────────────────────────────
+const { Mistral } = require('@mistralai/mistralai');
+
+const mistral = process.env.MISTRAL_API_KEY ? new Mistral({ apiKey: process.env.MISTRAL_API_KEY }) : null;
+
+const SYSTEM_PROMPT = `You are a concise transit assistant for Tirana's public transport system.
+
+STRICT RULES:
+- Keep all responses under 80 words
+- Never repeat information already stated
+- Answer only what is directly asked — no suggestions, no filler, no disclaimers
+- If the answer is a list, use max 5 items
+- Never greet the user or say goodbye
+- Never explain what you are about to do, just do it
+- If asked something outside transit (stops, routes, schedules, directions), reply: "I only handle Tirana transit queries."`;
+
+const chatHistories = new Map();
+
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { message, sessionId = 'default' } = req.body;
+    
+    if (!message || message.trim().length === 0) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    if (!mistral) {
+      return res.status(503).json({ 
+        error: 'Chatbot not configured',
+        reply: 'The AI chatbot is currently unavailable. Please check back later or use the route planner for transit information.'
+      });
+    }
+
+    let history = chatHistories.get(sessionId);
+    if (!history) {
+      history = [];
+      chatHistories.set(sessionId, history);
+    }
+
+    const messages = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...history.map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: h.text })),
+      { role: 'user', content: message }
+    ];
+
+    const completion = await mistral.chat.complete({
+      model: 'mistral-small-latest',
+      messages: messages,
+      maxTokens: 500,
+      temperature: 0.7,
+    });
+
+    const reply = completion.choices[0]?.message?.content || 'Sorry, I could not generate a response.';
+
+    history.push({ role: 'user', text: message });
+    history.push({ role: 'model', text: reply });
+
+    if (history.length > 20) {
+      history = history.slice(-20);
+      chatHistories.set(sessionId, history);
+    }
+
+    res.json({ reply });
+  } catch (err) {
+    console.error('Mistral chat error:', err.message);
+    res.status(500).json({ 
+      error: 'Chat service error',
+      reply: 'Ndjesë, pati një problem. Ju lutem provoni përsëri. (Sorry, there was a problem. Please try again.)'
+    });
+  }
+});
+
+app.post('/api/chat/clear', (req, res) => {
+  const { sessionId = 'default' } = req.body;
+  chatHistories.delete(sessionId);
+  res.json({ success: true });
 });
 
 // ─── START SERVER ────────────────────────────────────────────────────────────

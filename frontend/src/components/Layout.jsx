@@ -2,6 +2,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { Bus, Map, Navigation, Ticket, LayoutDashboard, LogOut, Wallet as WalletIcon, CreditCard } from 'lucide-react';
 import logo from '../logo.jpeg';
+import ChatWidget from './ChatWidget';
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -76,6 +77,9 @@ export default function Layout() {
       <main className="main-content" style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
         <Outlet />
       </main>
+
+      {/* AI Chatbot */}
+      <ChatWidget />
     </div>
   );
 }

@@ -11,14 +11,19 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google/genai": "^1.50.1",
+    "@google/generative-ai": "^0.24.1",
+    "@mistralai/mistralai": "^1.15.1",
     "adm-zip": "^0.5.17",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "groq-sdk": "^1.1.2",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.4.1",
     "node-fetch": "^2.7.0",
+    "openai": "^6.34.0",
     "stripe": "^22.0.1",
     "uuid": "^13.0.0"
   }

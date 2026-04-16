@@ -171,6 +171,13 @@ npm run dev
 - Custom app logo
 - Consistent national color theming throughout the UI
 
+### 🤖 AI Transit Assistant
+- Floating chat widget on every page
+- Glassmorphism design with blur effect
+- Mistral AI-powered responses
+- Helps with route planning and transit questions
+- Supports Albanian and English
+
 ---
 
 ## API Endpoints
@@ -288,6 +295,7 @@ The tracking endpoint currently simulates vehicle movement in-memory. To connect
 | `ORS_API_KEY` | No | OpenRouteService API key for walking directions |
 | `STRIPE_SECRET_KEY` | **Yes** | Stripe secret key for payment processing |
 | `STRIPE_PUBLISHABLE_KEY` | **Yes** | Stripe publishable key (frontend) |
+| `MISTRAL_API_KEY` | **Yes** | Mistral API key for AI chatbot |
 
 ---
 
@@ -322,6 +330,42 @@ VITE_STRIPE_PUBLISHABLE_KEY=pk_test_...
 4. User completes payment via their preferred method
 5. Frontend confirms payment → calls `/api/payments/confirm`
 6. Backend credits the user's wallet balance
+
+---
+
+## AI Transit Assistant
+
+A floating Glassmorphism chatbot powered by Mistral AI, available on every page.
+
+### Features
+- **Glassmorphism UI** — Semi-transparent with blur, visible background
+- **High-contrast text** — White/off-white for readability
+- **Persistent chat** — Chat history maintained across page navigation
+- **Bilingual** — Supports Albanian and English
+- **Transit-focused** — System prompt defines role as Tirana transit expert
+
+### API Endpoints
+```
+POST   /api/chat           Send message, get AI response
+POST   /api/chat/clear    Clear chat history for session
+```
+
+### Setup
+
+1. Get a Mistral API key from [La Plateforme](https://console.mistral.ai)
+2. Add to `backend/.env`:
+```
+MISTRAL_API_KEY=your-mistral-api-key
+```
+
+### System Prompt
+
+The chatbot is configured with a detailed system prompt that:
+- Acts as Tirana Transit Expert
+- Uses friendly Albanian greetings
+- Knows important Tirana locations
+- Provides route suggestions
+- Maintains conversation context
 
 ---
 
